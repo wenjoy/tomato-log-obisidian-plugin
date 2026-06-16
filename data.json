@@ -1,10 +1,18 @@
 {
-  "durationMinutes": 1,
+  "durationMinutes": 25,
   "logFilePath": "Tomato Timer Log.md",
   "taskHistory": [
+    "anchor learning",
     "solana",
     "solana 456",
     "solana 123"
   ],
-  "activeSession": null
+  "activeSession": {
+    "taskName": "anchor learning",
+    "startTimestamp": 1781614149186,
+    "durationMs": 1500000,
+    "remainingMs": 1500000,
+    "status": "running",
+    "lastStartedTimestamp": 1781614149186
+  }
 }

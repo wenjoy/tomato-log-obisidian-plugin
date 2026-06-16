@@ -14,9 +14,21 @@ import {
 const VIEW_TYPE_TOMATO_COUNTDOWN = "tomato-countdown-view";
 const DEFAULT_DURATION_MINUTES = 25;
 const MAX_HISTORY_ITEMS = 20;
+const PRETTY_TOMATO = "🍅";
+const ROTTEN_TOMATO = "🤢🍅";
 
 type TimerStatus = "idle" | "running" | "paused";
-type RecordStatus = "done" | "interrupted";
+type TomatoRecordStatus = typeof PRETTY_TOMATO | typeof ROTTEN_TOMATO;
+
+interface CompletionFeedback {
+  status: TomatoRecordStatus;
+  text: string;
+}
+
+interface ElectronNotificationConstructor {
+  isSupported(): boolean;
+  new (options: { title: string; body?: string }): { show(): void };
+}
 
 interface TomatoCountdownSettings {
   durationMinutes: number;
@@ -170,6 +182,14 @@ export default class TomatoCountdownPlugin extends Plugin {
       return;
     }
 
+    if (current && current.status === "paused") {
+      current.status = "running";
+      current.lastStartedTimestamp = Date.now();
+      await this.saveSettings();
+      this.emitTimerChange();
+      return;
+    }
+
     const normalizedTaskName = (taskName ?? current?.taskName ?? "").trim();
     if (!normalizedTaskName) {
       await this.promptAndStart();
@@ -225,7 +245,7 @@ export default class TomatoCountdownPlugin extends Plugin {
       return;
     }
 
-    await this.recordSession(session, "interrupted", Date.now(), `rotten tomato - ${reason}`);
+    await this.recordSession(session, ROTTEN_TOMATO, Date.now(), reason);
     this.settings.activeSession = null;
     await this.saveSettings();
     this.emitTimerChange();
@@ -240,7 +260,7 @@ export default class TomatoCountdownPlugin extends Plugin {
     }
 
     this.isCompletionPromptOpen = true;
-    const feeling = await new FeelingModal(this.app).openAndGetValue();
+    const feedback = await new FeelingModal(this.app).openAndGetValue();
     this.isCompletionPromptOpen = false;
 
     if (this.settings.activeSession !== session) {
@@ -248,11 +268,11 @@ export default class TomatoCountdownPlugin extends Plugin {
     }
 
     const endTimestamp = session.startTimestamp + session.durationMs;
-    await this.recordSession(session, "done", endTimestamp, `pretty tomato 🍅 - ${feeling}`);
+    await this.recordSession(session, feedback.status, endTimestamp, feedback.text);
     this.settings.activeSession = null;
     await this.saveSettings();
     this.emitTimerChange();
-    this.notifySystem("Tomato countdown finished", feeling);
+    this.notifySystem("Tomato countdown finished", feedback.text);
     this.notifyFinished(session.taskName);
   }
 
@@ -276,23 +296,6 @@ export default class TomatoCountdownPlugin extends Plugin {
 
   getTaskName(): string {
     return this.settings.activeSession?.taskName ?? "";
-  }
-
-  async setTaskName(taskName: string): Promise<void> {
-    const session = this.settings.activeSession;
-    if (!session || session.status !== "paused") {
-      return;
-    }
-
-    const normalizedTaskName = taskName.trim();
-    if (!normalizedTaskName) {
-      return;
-    }
-
-    session.taskName = normalizedTaskName;
-    await this.addTaskToHistory(normalizedTaskName);
-    await this.saveSettings();
-    this.emitTimerChange();
   }
 
   private handleTick(): void {
@@ -334,7 +337,7 @@ export default class TomatoCountdownPlugin extends Plugin {
 
   private async recordSession(
     session: ActiveSession,
-    status: RecordStatus,
+    status: TomatoRecordStatus,
     endTimestamp: number,
     note: string,
   ): Promise<void> {
@@ -363,24 +366,29 @@ export default class TomatoCountdownPlugin extends Plugin {
   }
 
   private notifySystem(title: string, body: string): void {
+    const electronNotification = getElectronNotification();
+    if (electronNotification?.isSupported()) {
+      new electronNotification({
+        title,
+        body,
+      }).show();
+      return;
+    }
+
     const notificationApi = window.Notification;
     if (!notificationApi) {
       return;
     }
 
-    const send = () => {
-      new notificationApi(title, { body });
-    };
-
     if (notificationApi.permission === "granted") {
-      send();
+      new notificationApi(title, { body });
       return;
     }
 
     if (notificationApi.permission === "default") {
       void notificationApi.requestPermission().then((permission) => {
         if (permission === "granted") {
-          send();
+          new notificationApi(title, { body });
         }
       });
     }
@@ -392,10 +400,11 @@ export default class TomatoCountdownPlugin extends Plugin {
 }
 
 class FeelingModal extends Modal {
-  private resolvePromise: (value: string) => void;
-  private feeling = "not recorded";
+  private resolvePromise: (value: CompletionFeedback) => void;
+  private status: TomatoRecordStatus = PRETTY_TOMATO;
+  private feedbackInputEl: HTMLInputElement;
 
-  openAndGetValue(): Promise<string> {
+  openAndGetValue(): Promise<CompletionFeedback> {
     this.open();
     return new Promise((resolve) => {
       this.resolvePromise = resolve;
@@ -406,33 +415,54 @@ class FeelingModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: "How did it go?" });
-    contentEl.createEl("p", { text: "Pick a feeling for this finished tomato." });
+    contentEl.createEl("p", { text: "Choose the result and add a short note." });
 
     const buttons = contentEl.createDiv({ cls: "tomato-countdown-actions" });
 
     const goodButton = buttons.createEl("button", { text: "🙂 Good" });
     const badButton = buttons.createEl("button", { text: "🙁 Bad" });
-    const skipButton = buttons.createEl("button", { text: "Skip" });
+    const interruptedButton = buttons.createEl("button", { text: `${ROTTEN_TOMATO} Interrupted` });
+
+    new Setting(contentEl)
+      .setName("Feeling")
+      .addText((text) => {
+        this.feedbackInputEl = text.inputEl;
+        text.setPlaceholder("Optional note about the task");
+        text.inputEl.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            this.close();
+          }
+        });
+      });
 
     goodButton.addEventListener("click", () => {
-      this.feeling = "🙂 good";
+      this.status = PRETTY_TOMATO;
+      this.feedbackInputEl.value = this.feedbackInputEl.value.trim() || "🙂 good";
       this.close();
     });
 
     badButton.addEventListener("click", () => {
-      this.feeling = "🙁 bad";
+      this.status = PRETTY_TOMATO;
+      this.feedbackInputEl.value = this.feedbackInputEl.value.trim() || "🙁 bad";
       this.close();
     });
 
-    skipButton.addEventListener("click", () => {
-      this.feeling = "not recorded";
+    interruptedButton.addEventListener("click", () => {
+      this.status = ROTTEN_TOMATO;
+      this.feedbackInputEl.value = this.feedbackInputEl.value.trim() || "not completed";
       this.close();
     });
+
+    window.setTimeout(() => this.feedbackInputEl.focus(), 0);
   }
 
   onClose(): void {
+    const text = this.feedbackInputEl?.value.trim() || "not recorded";
     this.contentEl.empty();
-    this.resolvePromise?.(this.feeling);
+    this.resolvePromise?.({
+      status: this.status,
+      text,
+    });
   }
 }
 
@@ -503,7 +533,7 @@ class TomatoCountdownView extends ItemView {
   private timeEl: HTMLElement;
   private statusEl: HTMLElement;
   private taskInputEl: HTMLInputElement;
-  private historySelectEl: HTMLSelectElement;
+  private historyListEl: HTMLElement;
   private startButtonEl: HTMLButtonElement;
   private pauseButtonEl: HTMLButtonElement;
   private abandonButtonEl: HTMLButtonElement;
@@ -543,12 +573,6 @@ class TomatoCountdownView extends ItemView {
       },
     });
 
-    formPanel.createEl("label", { text: "History" });
-    this.historySelectEl = formPanel.createEl("select");
-    this.historySelectEl.addEventListener("change", () => {
-      this.taskInputEl.value = this.historySelectEl.value;
-    });
-
     const actionPanel = container.createDiv({ cls: "tomato-countdown-actions" });
     this.startButtonEl = actionPanel.createEl("button", { text: "Start" });
     this.pauseButtonEl = actionPanel.createEl("button", { text: "Stop" });
@@ -568,14 +592,7 @@ class TomatoCountdownView extends ItemView {
 
     const historyPanel = container.createDiv({ cls: "tomato-countdown-history" });
     historyPanel.createDiv({ cls: "tomato-countdown-history-title", text: "Recent tasks" });
-    const historyList = historyPanel.createDiv({ cls: "tomato-countdown-history-list" });
-
-    this.plugin.settings.taskHistory.forEach((taskName) => {
-      const taskButton = historyList.createEl("button", { text: taskName });
-      taskButton.addEventListener("click", () => {
-        this.taskInputEl.value = taskName;
-      });
-    });
+    this.historyListEl = historyPanel.createDiv({ cls: "tomato-countdown-history-list" });
 
     this.registerEvent(
       this.plugin.events.on("change", () => {
@@ -602,31 +619,29 @@ class TomatoCountdownView extends ItemView {
       this.taskInputEl.value = taskName;
     }
 
-    this.renderHistorySelect();
+    this.renderHistory();
 
-    this.taskInputEl.disabled = status === "running";
+    this.taskInputEl.disabled = status !== "idle";
     this.startButtonEl.setText(status === "paused" ? "Resume" : "Start");
     this.startButtonEl.disabled = status === "running";
     this.pauseButtonEl.disabled = status !== "running";
     this.abandonButtonEl.disabled = status === "idle";
   }
 
-  private renderHistorySelect(): void {
-    const selectedValue = this.historySelectEl.value;
-    this.historySelectEl.empty();
-    this.historySelectEl.createEl("option", {
-      text: "Select a previous task",
-      value: "",
-    });
-
+  private renderHistory(): void {
+    this.historyListEl.empty();
+    const canSelectTask = this.plugin.getStatus() === "idle";
     this.plugin.settings.taskHistory.forEach((taskName) => {
-      this.historySelectEl.createEl("option", {
+      const taskButton = this.historyListEl.createEl("button", {
         text: taskName,
-        value: taskName,
+      });
+      taskButton.disabled = !canSelectTask;
+      taskButton.addEventListener("click", () => {
+        if (canSelectTask) {
+          this.taskInputEl.value = taskName;
+        }
       });
     });
-
-    this.historySelectEl.value = this.plugin.settings.taskHistory.includes(selectedValue) ? selectedValue : "";
   }
 }
 
@@ -784,6 +799,19 @@ function formatTime(timestamp: number): string {
 
 function getDateTitle(date: Date): string {
   return `# ${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function getElectronNotification(): ElectronNotificationConstructor | null {
+  try {
+    if (typeof require !== "function") {
+      return null;
+    }
+
+    const electron = require("electron") as { Notification?: ElectronNotificationConstructor };
+    return electron.Notification ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function appendWithDateHeader(currentContent: string, datedLine: string): string {

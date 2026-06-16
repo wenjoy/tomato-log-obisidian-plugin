@@ -1,0 +1,95 @@
+.tomato-countdown-view {
+  --tomato-accent: #c2410c;
+  --tomato-surface: var(--background-secondary);
+  --tomato-border: var(--background-modifier-border);
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+}
+
+.tomato-countdown-panel {
+  border: 1px solid var(--tomato-border);
+  border-radius: 8px;
+  background: var(--tomato-surface);
+  padding: 16px;
+}
+
+.tomato-countdown-time {
+  color: var(--text-normal);
+  font-size: clamp(42px, 14vw, 88px);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+  text-align: center;
+}
+
+.tomato-countdown-status {
+  color: var(--text-muted);
+  font-size: var(--font-ui-medium);
+  min-height: 22px;
+  text-align: center;
+}
+
+.tomato-countdown-form {
+  display: grid;
+  gap: 10px;
+}
+
+.tomato-countdown-form label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+}
+
+.tomato-countdown-form input,
+.tomato-countdown-form select {
+  width: 100%;
+}
+
+.tomato-countdown-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.tomato-countdown-actions button {
+  min-width: 0;
+}
+
+.tomato-countdown-history {
+  display: grid;
+  gap: 8px;
+}
+
+.tomato-countdown-history-title {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+}
+
+.tomato-countdown-history-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tomato-countdown-history-list button {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .tomato-countdown-view {
+    padding: 12px;
+  }
+
+  .tomato-countdown-actions {
+    grid-template-columns: 1fr;
+  }
+}

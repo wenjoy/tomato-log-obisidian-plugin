@@ -1,0 +1,10 @@
+{
+  "durationMinutes": 1,
+  "logFilePath": "Tomato Timer Log.md",
+  "taskHistory": [
+    "solana",
+    "solana 456",
+    "solana 123"
+  ],
+  "activeSession": null
+}

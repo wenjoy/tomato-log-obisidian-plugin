@@ -1,0 +1,27 @@
+{
+  "name": "obsidian-tomato-countdown",
+  "version": "0.1.0",
+  "description": "A 25 minute tomato countdown timer for Obsidian.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+  },
+  "keywords": [
+    "obsidian",
+    "pomodoro",
+    "tomato timer"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "tslib": "^2.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.20.2",
+    "obsidian": "^1.5.12",
+    "typescript": "^5.4.2"
+  }
+}

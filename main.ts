@@ -416,12 +416,6 @@ class FeelingModal extends Modal {
     contentEl.createEl("h2", { text: "How did it go?" });
     contentEl.createEl("p", { text: "Choose the result and add a short note." });
 
-    const buttons = contentEl.createDiv({ cls: "tomato-countdown-actions" });
-
-    const goodButton = buttons.createEl("button", { text: `${GOOD_TOMATO}Good` });
-    const badButton = buttons.createEl("button", { text: `${BAD_TOMATO}Bad` });
-    const interruptedButton = buttons.createEl("button", { text: `${ROTTEN_TOMATO} Interrupted` });
-
     new Setting(contentEl).setName("Feeling").addText((text) => {
       this.feedbackInputEl = text.inputEl;
       text.setPlaceholder("Optional note about the task");
@@ -431,6 +425,12 @@ class FeelingModal extends Modal {
         }
       });
     });
+
+    const buttons = contentEl.createDiv({ cls: "tomato-countdown-actions" });
+
+    const goodButton = buttons.createEl("button", { text: `${GOOD_TOMATO}Good` });
+    const badButton = buttons.createEl("button", { text: `${BAD_TOMATO}Bad` });
+    const interruptedButton = buttons.createEl("button", { text: `${ROTTEN_TOMATO} Interrupted` });
 
     goodButton.addEventListener("click", () => {
       this.status = GOOD_TOMATO;

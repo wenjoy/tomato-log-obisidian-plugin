@@ -14,11 +14,12 @@ import {
 const VIEW_TYPE_TOMATO_COUNTDOWN = "tomato-countdown-view";
 const DEFAULT_DURATION_MINUTES = 25;
 const MAX_HISTORY_ITEMS = 20;
-const PRETTY_TOMATO = "🍅";
-const ROTTEN_TOMATO = "🤢🍅";
+const GOOD_TOMATO = "🙂";
+const BAD_TOMATO = "🙁";
+const ROTTEN_TOMATO = "🤢";
 
 type TimerStatus = "idle" | "running" | "paused";
-type TomatoRecordStatus = typeof PRETTY_TOMATO | typeof ROTTEN_TOMATO;
+type TomatoRecordStatus = typeof GOOD_TOMATO | typeof BAD_TOMATO | typeof ROTTEN_TOMATO;
 
 interface CompletionFeedback {
   status: TomatoRecordStatus;
@@ -62,10 +63,7 @@ export default class TomatoCountdownPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    this.registerView(
-      VIEW_TYPE_TOMATO_COUNTDOWN,
-      (leaf) => new TomatoCountdownView(leaf, this),
-    );
+    this.registerView(VIEW_TYPE_TOMATO_COUNTDOWN, (leaf) => new TomatoCountdownView(leaf, this));
 
     this.addRibbonIcon("timer", "Tomato Countdown", () => {
       void this.activateView();
@@ -341,7 +339,8 @@ export default class TomatoCountdownPlugin extends Plugin {
     endTimestamp: number,
     note: string,
   ): Promise<void> {
-    const line = `${formatTime(session.startTimestamp)}-${formatTime(endTimestamp)} ${session.taskName} (${status}: ${note})`;
+    const normalizedNote = note.trim();
+    const line = `${formatTime(session.startTimestamp)}-${formatTime(endTimestamp)} ${session.taskName} (${status}🍅 :${normalizedNote ? ` ${normalizedNote}` : ""})`;
 
     await this.appendLogLine(line);
   }
@@ -349,16 +348,16 @@ export default class TomatoCountdownPlugin extends Plugin {
   private async appendLogLine(line: string): Promise<void> {
     const path = this.settings.logFilePath.trim() || DEFAULT_SETTINGS.logFilePath;
     const existingFile = this.app.vault.getAbstractFileByPath(path);
-    const datedLine = `${getDateTitle(new Date())}\n${line}`;
+    const dateTitle = getDateTitle(new Date());
 
     if (existingFile instanceof TFile) {
       const currentContent = await this.app.vault.read(existingFile);
-      const nextContent = appendWithDateHeader(currentContent, datedLine);
+      const nextContent = prependWithDateHeader(currentContent, dateTitle, line);
       await this.app.vault.modify(existingFile, nextContent);
       return;
     }
 
-    await this.app.vault.create(path, `${datedLine}\n`);
+    await this.app.vault.create(path, `${dateTitle}\n${line}\n`);
   }
 
   private notifyFinished(taskName: string): void {
@@ -401,7 +400,7 @@ export default class TomatoCountdownPlugin extends Plugin {
 
 class FeelingModal extends Modal {
   private resolvePromise: (value: CompletionFeedback) => void;
-  private status: TomatoRecordStatus = PRETTY_TOMATO;
+  private status: TomatoRecordStatus = GOOD_TOMATO;
   private feedbackInputEl: HTMLInputElement;
 
   openAndGetValue(): Promise<CompletionFeedback> {
@@ -419,31 +418,27 @@ class FeelingModal extends Modal {
 
     const buttons = contentEl.createDiv({ cls: "tomato-countdown-actions" });
 
-    const goodButton = buttons.createEl("button", { text: "🙂 Good" });
-    const badButton = buttons.createEl("button", { text: "🙁 Bad" });
+    const goodButton = buttons.createEl("button", { text: `${GOOD_TOMATO}Good` });
+    const badButton = buttons.createEl("button", { text: `${BAD_TOMATO}Bad` });
     const interruptedButton = buttons.createEl("button", { text: `${ROTTEN_TOMATO} Interrupted` });
 
-    new Setting(contentEl)
-      .setName("Feeling")
-      .addText((text) => {
-        this.feedbackInputEl = text.inputEl;
-        text.setPlaceholder("Optional note about the task");
-        text.inputEl.addEventListener("keydown", (event) => {
-          if (event.key === "Enter") {
-            this.close();
-          }
-        });
+    new Setting(contentEl).setName("Feeling").addText((text) => {
+      this.feedbackInputEl = text.inputEl;
+      text.setPlaceholder("Optional note about the task");
+      text.inputEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          this.close();
+        }
       });
+    });
 
     goodButton.addEventListener("click", () => {
-      this.status = PRETTY_TOMATO;
-      this.feedbackInputEl.value = this.feedbackInputEl.value.trim() || "🙂 good";
+      this.status = GOOD_TOMATO;
       this.close();
     });
 
     badButton.addEventListener("click", () => {
-      this.status = PRETTY_TOMATO;
-      this.feedbackInputEl.value = this.feedbackInputEl.value.trim() || "🙁 bad";
+      this.status = BAD_TOMATO;
       this.close();
     });
 
@@ -457,7 +452,7 @@ class FeelingModal extends Modal {
   }
 
   onClose(): void {
-    const text = this.feedbackInputEl?.value.trim() || "not recorded";
+    const text = this.feedbackInputEl?.value.trim() ?? "";
     this.contentEl.empty();
     this.resolvePromise?.({
       status: this.status,
@@ -483,17 +478,15 @@ class ReasonModal extends Modal {
     contentEl.empty();
     contentEl.createEl("h2", { text: "Why abandon the timer?" });
 
-    new Setting(contentEl)
-      .setName("Reason")
-      .addText((text) => {
-        this.inputEl = text.inputEl;
-        text.setPlaceholder("Enter the reason");
-        text.inputEl.addEventListener("keydown", (event) => {
-          if (event.key === "Enter") {
-            this.submit();
-          }
-        });
+    new Setting(contentEl).setName("Reason").addText((text) => {
+      this.inputEl = text.inputEl;
+      text.setPlaceholder("Enter the reason");
+      text.inputEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          this.submit();
+        }
       });
+    });
 
     new Setting(contentEl)
       .addButton((button) => {
@@ -503,9 +496,7 @@ class ReasonModal extends Modal {
           .onClick(() => this.submit());
       })
       .addButton((button) => {
-        button
-          .setButtonText("Cancel")
-          .onClick(() => this.close());
+        button.setButtonText("Cancel").onClick(() => this.close());
       });
 
     window.setTimeout(() => this.inputEl.focus(), 0);
@@ -668,29 +659,25 @@ class TaskNameModal extends Modal {
     contentEl.empty();
     contentEl.createEl("h2", { text: "Start tomato countdown" });
 
-    new Setting(contentEl)
-      .setName("Task name")
-      .addText((text) => {
-        this.taskInputEl = text.inputEl;
-        text.setPlaceholder("What are you focusing on?");
-        text.inputEl.addEventListener("keydown", (event) => {
-          if (event.key === "Enter") {
-            this.submit();
-          }
-        });
+    new Setting(contentEl).setName("Task name").addText((text) => {
+      this.taskInputEl = text.inputEl;
+      text.setPlaceholder("What are you focusing on?");
+      text.inputEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          this.submit();
+        }
       });
+    });
 
     if (this.history.length > 0) {
-      new Setting(contentEl)
-        .setName("History")
-        .addDropdown((dropdown) => {
-          dropdown.addOption("", "Select a previous task");
-          this.history.forEach((taskName) => dropdown.addOption(taskName, taskName));
-          dropdown.onChange((value) => {
-            this.taskInputEl.value = value;
-            this.taskInputEl.focus();
-          });
+      new Setting(contentEl).setName("History").addDropdown((dropdown) => {
+        dropdown.addOption("", "Select a previous task");
+        this.history.forEach((taskName) => dropdown.addOption(taskName, taskName));
+        dropdown.onChange((value) => {
+          this.taskInputEl.value = value;
+          this.taskInputEl.focus();
         });
+      });
     }
 
     new Setting(contentEl)
@@ -701,9 +688,7 @@ class TaskNameModal extends Modal {
           .onClick(() => this.submit());
       })
       .addButton((button) => {
-        button
-          .setButtonText("Cancel")
-          .onClick(() => this.close());
+        button.setButtonText("Cancel").onClick(() => this.close());
       });
 
     window.setTimeout(() => this.taskInputEl.focus(), 0);
@@ -773,14 +758,12 @@ class TomatoCountdownSettingTab extends PluginSettingTab {
       .setName("Clear task history")
       .setDesc("Remove saved task name suggestions.")
       .addButton((button) => {
-        button
-          .setButtonText("Clear")
-          .onClick(async () => {
-            this.plugin.settings.taskHistory = [];
-            await this.plugin.saveSettings();
-            this.display();
-            this.plugin.events.trigger("change");
-          });
+        button.setButtonText("Clear").onClick(async () => {
+          this.plugin.settings.taskHistory = [];
+          await this.plugin.saveSettings();
+          this.display();
+          this.plugin.events.trigger("change");
+        });
       });
   }
 }
@@ -814,20 +797,58 @@ function getElectronNotification(): ElectronNotificationConstructor | null {
   }
 }
 
-function appendWithDateHeader(currentContent: string, datedLine: string): string {
+function prependWithDateHeader(currentContent: string, dateTitle: string, line: string): string {
   const trimmed = currentContent.trimEnd();
-  const currentDate = getDateTitle(new Date());
-  const line = datedLine.split("\n")[1];
 
   if (trimmed.length === 0) {
-    return `${datedLine}\n`;
+    return `${dateTitle}\n${line}\n`;
   }
 
-  if (trimmed.split("\n").some((contentLine) => contentLine.trim() === currentDate)) {
-    return `${trimmed}\n${line}\n`;
+  const blocks = splitDateBlocks(trimmed);
+  const currentBlockIndex = blocks.findIndex((block) => block.title === dateTitle);
+  const existingCurrentBlock = currentBlockIndex >= 0 ? blocks.splice(currentBlockIndex, 1)[0] : null;
+  const currentBody = existingCurrentBlock?.body.trim();
+  const currentBlock = currentBody ? `${dateTitle}\n${line}\n${currentBody}` : `${dateTitle}\n${line}`;
+  const rest = blocks
+    .map((block) => block.raw.trim())
+    .filter(Boolean)
+    .join("\n\n");
+
+  return rest ? `${currentBlock}\n\n${rest}\n` : `${currentBlock}\n`;
+}
+
+function splitDateBlocks(content: string): { title: string; body: string; raw: string }[] {
+  const lines = content.split("\n");
+  const blocks: { title: string; body: string; raw: string }[] = [];
+  let currentTitle = "";
+  let currentLines: string[] = [];
+
+  const flush = () => {
+    if (!currentTitle && currentLines.length === 0) {
+      return;
+    }
+
+    const raw = currentLines.join("\n");
+    blocks.push({
+      title: currentTitle,
+      body: currentTitle ? currentLines.slice(1).join("\n") : raw,
+      raw,
+    });
+  };
+
+  for (const contentLine of lines) {
+    if (/^# \d{4}-\d{2}-\d{2}$/.test(contentLine.trim())) {
+      flush();
+      currentTitle = contentLine.trim();
+      currentLines = [currentTitle];
+      continue;
+    }
+
+    currentLines.push(contentLine);
   }
 
-  return `${trimmed}\n\n${datedLine}\n`;
+  flush();
+  return blocks;
 }
 
 function getStatusText(status: TimerStatus, taskName: string): string {

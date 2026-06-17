@@ -257,6 +257,7 @@ export default class TomatoCountdownPlugin extends Plugin {
       return;
     }
 
+    this.notifySystem("Tomato countdown finished", session.taskName);
     this.isCompletionPromptOpen = true;
     const feedback = await new FeelingModal(this.app).openAndGetValue();
     this.isCompletionPromptOpen = false;
@@ -270,7 +271,6 @@ export default class TomatoCountdownPlugin extends Plugin {
     this.settings.activeSession = null;
     await this.saveSettings();
     this.emitTimerChange();
-    this.notifySystem("Tomato countdown finished", feedback.text);
     this.notifyFinished(session.taskName);
   }
 
@@ -630,6 +630,7 @@ class TomatoCountdownView extends ItemView {
       taskButton.addEventListener("click", () => {
         if (canSelectTask) {
           this.taskInputEl.value = taskName;
+          this.taskInputEl.focus();
         }
       });
     });

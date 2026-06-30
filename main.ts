@@ -28,7 +28,7 @@ interface CompletionFeedback {
 
 interface ElectronNotificationConstructor {
   isSupported(): boolean;
-  new (options: { title: string; body?: string }): { show(): void };
+  new(options: { title: string; body?: string }): { show(): void };
 }
 
 interface TomatoCountdownSettings {
@@ -340,7 +340,7 @@ export default class TomatoCountdownPlugin extends Plugin {
     note: string,
   ): Promise<void> {
     const normalizedNote = note.trim();
-    const line = `${formatTime(session.startTimestamp)}-${formatTime(endTimestamp)} ${session.taskName} (${status}🍅 :${normalizedNote ? ` ${normalizedNote}` : ""})`;
+    const line = `#### [${formatTime(session.startTimestamp)}-${formatTime(endTimestamp)}] ${session.taskName} (${status}🍅 :${normalizedNote ? ` ${normalizedNote}` : ""})`;
 
     await this.appendLogLine(line);
   }

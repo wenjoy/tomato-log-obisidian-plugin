@@ -19,11 +19,11 @@ const BAD_TOMATO = "🙁";
 const ROTTEN_TOMATO = "🤢";
 
 type TimerStatus = "idle" | "running" | "paused";
-type TomatoRecordStatus = typeof GOOD_TOMATO | typeof BAD_TOMATO | typeof ROTTEN_TOMATO;
+type TomatoQuality = typeof GOOD_TOMATO | typeof BAD_TOMATO | typeof ROTTEN_TOMATO;
 
-interface CompletionFeedback {
-  status: TomatoRecordStatus;
-  text: string;
+interface Interrupt {
+  reason: string;
+  timestamp: number;
 }
 
 interface ElectronNotificationConstructor {
@@ -45,6 +45,49 @@ interface ActiveSession {
   remainingMs: number;
   status: TimerStatus;
   lastStartedTimestamp: number | null;
+  interrupts: Interrupt[];
+}
+
+interface SessionRecord {
+  startTimestamp: number;
+  endTimestamp: number;
+  taskName: string;
+  durationMinutes: number;
+  quality: TomatoQuality;
+  interrupts: number;
+  abandoned: boolean;
+  note: string;
+}
+
+interface TaskStatistics {
+  taskName: string;
+  count: number;
+  focusMinutes: number;
+  interrupts: number;
+}
+
+interface DailyStatistics {
+  date: string;
+  records: SessionRecord[];
+  totalSessions: number;
+  completedCount: number;
+  abandonedCount: number;
+  goodCount: number;
+  badCount: number;
+  rottenCount: number;
+  totalInterrupts: number;
+  totalFocusMinutes: number;
+  byTask: TaskStatistics[];
+}
+
+interface TodaySummary {
+  date: string;
+  totalSessions: number;
+  goodCount: number;
+  badCount: number;
+  rottenCount: number;
+  totalFocusMinutes: number;
+  totalInterrupts: number;
 }
 
 const DEFAULT_SETTINGS: TomatoCountdownSettings = {
@@ -57,8 +100,9 @@ const DEFAULT_SETTINGS: TomatoCountdownSettings = {
 export default class TomatoCountdownPlugin extends Plugin {
   settings: TomatoCountdownSettings;
   events = new Events();
+  todaySummary: TodaySummary | null = null;
   private isAbandonPromptOpen = false;
-  private isCompletionPromptOpen = false;
+  private isInterruptPromptOpen = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -86,15 +130,15 @@ export default class TomatoCountdownPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "pause-tomato-countdown",
-      name: "Pause tomato countdown",
+      id: "interrupt-tomato-countdown",
+      name: "Interrupt tomato countdown",
       checkCallback: (checking) => {
         if (!this.settings.activeSession || this.settings.activeSession.status !== "running") {
           return false;
         }
 
         if (!checking) {
-          void this.pauseTimer();
+          void this.interruptTimer();
         }
 
         return true;
@@ -117,9 +161,18 @@ export default class TomatoCountdownPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "show-tomato-statistics",
+      name: "Show today's tomato statistics",
+      callback: () => {
+        void this.showStatistics(new Date());
+      },
+    });
+
     this.addSettingTab(new TomatoCountdownSettingTab(this.app, this));
     this.registerInterval(window.setInterval(() => this.handleTick(), 1000));
     this.handleTick();
+    void this.refreshTodaySummary();
   }
 
   onunload(): void {
@@ -130,6 +183,11 @@ export default class TomatoCountdownPlugin extends Plugin {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     this.settings.durationMinutes = Math.max(1, Number(this.settings.durationMinutes) || DEFAULT_DURATION_MINUTES);
     this.settings.taskHistory = Array.isArray(this.settings.taskHistory) ? this.settings.taskHistory : [];
+    if (this.settings.activeSession) {
+      this.settings.activeSession.interrupts = Array.isArray(this.settings.activeSession.interrupts)
+        ? this.settings.activeSession.interrupts
+        : [];
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -208,6 +266,7 @@ export default class TomatoCountdownPlugin extends Plugin {
       remainingMs: durationMs,
       status: "running",
       lastStartedTimestamp: Date.now(),
+      interrupts: [],
     };
 
     await this.addTaskToHistory(normalizedTaskName);
@@ -215,9 +274,36 @@ export default class TomatoCountdownPlugin extends Plugin {
     this.emitTimerChange();
   }
 
-  async pauseTimer(): Promise<void> {
+  async interruptTimer(): Promise<void> {
     const session = this.settings.activeSession;
-    if (!session || session.status !== "running") {
+    if (!session || session.status !== "running" || this.isInterruptPromptOpen) {
+      return;
+    }
+
+    this.isInterruptPromptOpen = true;
+    const reason = await new InterruptModal(this.app).openAndGetValue();
+    this.isInterruptPromptOpen = false;
+
+    const current = this.settings.activeSession;
+    if (!current || current !== session) {
+      return;
+    }
+
+    if (reason === null) {
+      return;
+    }
+
+    const trimmedReason = reason.trim() || "unspecified";
+    current.interrupts = [...(current.interrupts ?? []), { reason: trimmedReason, timestamp: Date.now() }];
+    await this.saveSettings();
+    this.emitTimerChange();
+    this.notifySystem("Tomato countdown interrupted", trimmedReason);
+    new Notice(`Interrupt logged: ${trimmedReason}`);
+  }
+
+  async abandonTimer(): Promise<void> {
+    const session = this.settings.activeSession;
+    if (!session || this.isAbandonPromptOpen || this.isInterruptPromptOpen) {
       return;
     }
 
@@ -226,15 +312,7 @@ export default class TomatoCountdownPlugin extends Plugin {
     session.lastStartedTimestamp = null;
     await this.saveSettings();
     this.emitTimerChange();
-  }
 
-  async abandonTimer(): Promise<void> {
-    const session = this.settings.activeSession;
-    if (!session || this.isAbandonPromptOpen) {
-      return;
-    }
-
-    this.updateRemainingTime(session);
     this.isAbandonPromptOpen = true;
     const reason = await new ReasonModal(this.app).openAndGetValue();
     this.isAbandonPromptOpen = false;
@@ -246,6 +324,7 @@ export default class TomatoCountdownPlugin extends Plugin {
     await this.recordSession(session, ROTTEN_TOMATO, Date.now(), reason);
     this.settings.activeSession = null;
     await this.saveSettings();
+    await this.refreshTodaySummary();
     this.emitTimerChange();
     this.notifySystem("Tomato countdown abandoned", reason);
     new Notice("Tomato countdown abandoned.");
@@ -253,24 +332,21 @@ export default class TomatoCountdownPlugin extends Plugin {
 
   async completeTimer(): Promise<void> {
     const session = this.settings.activeSession;
-    if (!session || this.isCompletionPromptOpen) {
+    if (!session) {
       return;
     }
 
-    this.notifySystem("Tomato countdown finished", session.taskName);
-    this.isCompletionPromptOpen = true;
-    const feedback = await new FeelingModal(this.app).openAndGetValue();
-    this.isCompletionPromptOpen = false;
-
-    if (this.settings.activeSession !== session) {
-      return;
-    }
-
+    session.remainingMs = 0;
     const endTimestamp = session.startTimestamp + session.durationMs;
-    await this.recordSession(session, feedback.status, endTimestamp, feedback.text);
+    const interrupts = session.interrupts ?? [];
+    const quality = qualityForInterrupts(interrupts.length);
+
+    await this.recordSession(session, quality, endTimestamp, null);
     this.settings.activeSession = null;
     await this.saveSettings();
+    await this.refreshTodaySummary();
     this.emitTimerChange();
+    this.notifySystem("Tomato countdown finished", session.taskName);
     this.notifyFinished(session.taskName);
   }
 
@@ -294,6 +370,67 @@ export default class TomatoCountdownPlugin extends Plugin {
 
   getTaskName(): string {
     return this.settings.activeSession?.taskName ?? "";
+  }
+
+  getInterruptCount(): number {
+    return this.settings.activeSession?.interrupts?.length ?? 0;
+  }
+
+  async showStatistics(date: Date): Promise<void> {
+    const stats = await this.getDailyStatistics(date);
+    if (stats.totalSessions === 0) {
+      new Notice(`No tomato records for ${stats.date}.`);
+      return;
+    }
+
+    new StatisticsModal(this.app, stats).open();
+  }
+
+  async getDailyStatistics(date: Date): Promise<DailyStatistics> {
+    const dateStr = formatDateKey(date);
+    const records = await this.readRecordsForDate(dateStr);
+
+    const byTaskMap = new Map<string, TaskStatistics>();
+    for (const record of records) {
+      const taskStat = byTaskMap.get(record.taskName) ?? {
+        taskName: record.taskName,
+        count: 0,
+        focusMinutes: 0,
+        interrupts: 0,
+      };
+      taskStat.count += 1;
+      taskStat.focusMinutes += record.durationMinutes;
+      taskStat.interrupts += record.interrupts;
+      byTaskMap.set(record.taskName, taskStat);
+    }
+
+    return {
+      date: dateStr,
+      records,
+      totalSessions: records.length,
+      completedCount: records.filter((record) => !record.abandoned).length,
+      abandonedCount: records.filter((record) => record.abandoned).length,
+      goodCount: records.filter((record) => record.quality === GOOD_TOMATO).length,
+      badCount: records.filter((record) => record.quality === BAD_TOMATO).length,
+      rottenCount: records.filter((record) => record.quality === ROTTEN_TOMATO).length,
+      totalInterrupts: records.reduce((sum, record) => sum + record.interrupts, 0),
+      totalFocusMinutes: records.reduce((sum, record) => sum + record.durationMinutes, 0),
+      byTask: Array.from(byTaskMap.values()).sort((a, b) => b.count - a.count),
+    };
+  }
+
+  async refreshTodaySummary(): Promise<void> {
+    const stats = await this.getDailyStatistics(new Date());
+    this.todaySummary = {
+      date: stats.date,
+      totalSessions: stats.totalSessions,
+      goodCount: stats.goodCount,
+      badCount: stats.badCount,
+      rottenCount: stats.rottenCount,
+      totalFocusMinutes: stats.totalFocusMinutes,
+      totalInterrupts: stats.totalInterrupts,
+    };
+    this.emitTimerChange();
   }
 
   private handleTick(): void {
@@ -335,14 +472,46 @@ export default class TomatoCountdownPlugin extends Plugin {
 
   private async recordSession(
     session: ActiveSession,
-    status: TomatoRecordStatus,
+    quality: TomatoQuality,
     endTimestamp: number,
-    note: string,
+    abandonReason: string | null,
   ): Promise<void> {
-    const normalizedNote = note.trim();
-    const line = `#### [${formatTime(session.startTimestamp)}-${formatTime(endTimestamp)}] ${session.taskName} (${status}🍅 :${normalizedNote ? ` ${normalizedNote}` : ""})`;
+    const focusedMs = Math.max(0, session.durationMs - session.remainingMs);
+    const focusedMinutes = Math.max(1, Math.round(focusedMs / 60000));
+    const interruptCount = (session.interrupts ?? []).length;
+    const heading = `#### [${formatTime(session.startTimestamp)}-${formatTime(endTimestamp)}] ${session.taskName} (${focusedMinutes}m, ${quality}🍅, i${interruptCount})`;
 
-    await this.appendLogLine(line);
+    const contentLines: string[] = [];
+    for (const interrupt of session.interrupts ?? []) {
+      const reason = interrupt.reason.trim();
+      if (reason) {
+        contentLines.push(`- ${reason}`);
+      }
+    }
+    if (abandonReason) {
+      contentLines.push(`- abandoned: ${abandonReason}`);
+    }
+
+    const block = contentLines.length > 0 ? `${heading}\n${contentLines.join("\n")}` : heading;
+
+    await this.appendLogLine(block);
+  }
+
+  private async readRecordsForDate(dateStr: string): Promise<SessionRecord[]> {
+    const path = this.settings.logFilePath.trim() || DEFAULT_SETTINGS.logFilePath;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      return [];
+    }
+
+    const content = await this.app.vault.read(file);
+    const blocks = splitDateBlocks(content);
+    const block = blocks.find((item) => item.title === `# ${dateStr}`);
+    if (!block) {
+      return [];
+    }
+
+    return parseRecords(block.body, dateStr);
   }
 
   private async appendLogLine(line: string): Promise<void> {
@@ -398,12 +567,12 @@ export default class TomatoCountdownPlugin extends Plugin {
   }
 }
 
-class FeelingModal extends Modal {
-  private resolvePromise: (value: CompletionFeedback) => void;
-  private status: TomatoRecordStatus = GOOD_TOMATO;
-  private feedbackInputEl: HTMLInputElement;
+class InterruptModal extends Modal {
+  private resolvePromise: (value: string | null) => void;
+  private inputEl: HTMLTextAreaElement;
+  private value: string | null = null;
 
-  openAndGetValue(): Promise<CompletionFeedback> {
+  openAndGetValue(): Promise<string | null> {
     this.open();
     return new Promise((resolve) => {
       this.resolvePromise = resolve;
@@ -413,51 +582,49 @@ class FeelingModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "How did it go?" });
-    contentEl.createEl("p", { text: "Choose the result and add a short note." });
+    contentEl.createEl("h2", { text: "What distracted you?" });
+    contentEl.createEl("p", { text: "The timer keeps running. Log the interruption to track tomato quality." });
 
-    new Setting(contentEl).setName("Feeling").addText((text) => {
-      this.feedbackInputEl = text.inputEl;
-      text.setPlaceholder("Optional note about the task");
+    new Setting(contentEl).setName("Distraction").addTextArea((text) => {
+      this.inputEl = text.inputEl;
+      text.setPlaceholder("Phone, email, colleague, ...");
+      text.inputEl.addClass("tomato-countdown-interrupt-textarea");
       text.inputEl.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          this.close();
+        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          this.submit();
         }
       });
     });
 
-    const buttons = contentEl.createDiv({ cls: "tomato-countdown-actions" });
+    new Setting(contentEl)
+      .addButton((button) => {
+        button
+          .setButtonText("Log interrupt")
+          .setCta()
+          .onClick(() => this.submit());
+      })
+      .addButton((button) => {
+        button.setButtonText("Cancel").onClick(() => this.close());
+      });
 
-    const goodButton = buttons.createEl("button", { text: `${GOOD_TOMATO}Good` });
-    const badButton = buttons.createEl("button", { text: `${BAD_TOMATO}Bad` });
-    const interruptedButton = buttons.createEl("button", { text: `${ROTTEN_TOMATO} Interrupted` });
-
-    goodButton.addEventListener("click", () => {
-      this.status = GOOD_TOMATO;
-      this.close();
-    });
-
-    badButton.addEventListener("click", () => {
-      this.status = BAD_TOMATO;
-      this.close();
-    });
-
-    interruptedButton.addEventListener("click", () => {
-      this.status = ROTTEN_TOMATO;
-      this.feedbackInputEl.value = this.feedbackInputEl.value.trim() || "not completed";
-      this.close();
-    });
-
-    window.setTimeout(() => this.feedbackInputEl.focus(), 0);
+    window.setTimeout(() => this.inputEl.focus(), 0);
   }
 
   onClose(): void {
-    const text = this.feedbackInputEl?.value.trim() ?? "";
     this.contentEl.empty();
-    this.resolvePromise?.({
-      status: this.status,
-      text,
-    });
+    this.resolvePromise?.(this.value);
+  }
+
+  private submit(): void {
+    const reason = this.inputEl.value.trim();
+    if (!reason) {
+      new Notice("Enter what distracted you, or cancel.");
+      return;
+    }
+
+    this.value = reason;
+    this.close();
   }
 }
 
@@ -519,15 +686,78 @@ class ReasonModal extends Modal {
   }
 }
 
+class StatisticsModal extends Modal {
+  private stats: DailyStatistics;
+
+  constructor(app: App, stats: DailyStatistics) {
+    super(app);
+    this.stats = stats;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("tomato-countdown-stats");
+
+    contentEl.createEl("h2", { text: `Tomato statistics — ${this.stats.date}` });
+
+    const summary = contentEl.createDiv({ cls: "tomato-countdown-stats-row" });
+    summary.createEl("span", { text: `${this.stats.totalSessions} 🍅` });
+    summary.createEl("span", { text: `${this.stats.totalFocusMinutes}m focused` });
+    summary.createEl("span", { text: `${this.stats.totalInterrupts} interrupts` });
+
+    const quality = contentEl.createDiv({ cls: "tomato-countdown-stats-row" });
+    quality.createEl("span", { text: `${GOOD_TOMATO} ${this.stats.goodCount}` });
+    quality.createEl("span", { text: `${BAD_TOMATO} ${this.stats.badCount}` });
+    quality.createEl("span", { text: `${ROTTEN_TOMATO} ${this.stats.rottenCount}` });
+
+    const completion = contentEl.createDiv({ cls: "tomato-countdown-stats-row" });
+    completion.createEl("span", { text: `${this.stats.completedCount} completed` });
+    completion.createEl("span", { text: `${this.stats.abandonedCount} abandoned` });
+
+    if (this.stats.byTask.length > 0) {
+      contentEl.createEl("h3", { text: "By task" });
+      const list = contentEl.createDiv({ cls: "tomato-countdown-stats-tasks" });
+      for (const task of this.stats.byTask) {
+        const row = list.createDiv({ cls: "tomato-countdown-stats-task" });
+        row.createEl("div", { text: task.taskName, cls: "tomato-countdown-stats-task-name" });
+        row.createEl("div", {
+          text: `${task.count} 🍅 · ${task.focusMinutes}m · ${task.interrupts} interrupts`,
+          cls: "tomato-countdown-stats-task-meta",
+        });
+      }
+    }
+
+    if (this.stats.records.length > 0) {
+      contentEl.createEl("h3", { text: "Records" });
+      const records = contentEl.createDiv({ cls: "tomato-countdown-stats-records" });
+      for (const record of this.stats.records) {
+        const heading = `${formatTime(record.startTimestamp)}-${formatTime(record.endTimestamp)} ${record.taskName} (${record.durationMinutes}m, ${record.quality}🍅, i${record.interrupts})`;
+        const recordEl = records.createDiv({ cls: "tomato-countdown-stats-record" });
+        recordEl.createEl("div", { text: heading, cls: "tomato-countdown-stats-record-heading" });
+        if (record.note) {
+          recordEl.createEl("div", { text: record.note, cls: "tomato-countdown-stats-record-note" });
+        }
+      }
+    }
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 class TomatoCountdownView extends ItemView {
   private plugin: TomatoCountdownPlugin;
   private timeEl: HTMLElement;
   private statusEl: HTMLElement;
+  private todaySummaryEl: HTMLElement;
   private taskInputEl: HTMLInputElement;
   private historyListEl: HTMLElement;
   private startButtonEl: HTMLButtonElement;
-  private pauseButtonEl: HTMLButtonElement;
+  private interruptButtonEl: HTMLButtonElement;
   private abandonButtonEl: HTMLButtonElement;
+  private statsButtonEl: HTMLButtonElement;
 
   constructor(leaf: WorkspaceLeaf, plugin: TomatoCountdownPlugin) {
     super(leaf);
@@ -554,6 +784,7 @@ class TomatoCountdownView extends ItemView {
     const timerPanel = container.createDiv({ cls: "tomato-countdown-panel" });
     this.timeEl = timerPanel.createDiv({ cls: "tomato-countdown-time" });
     this.statusEl = timerPanel.createDiv({ cls: "tomato-countdown-status" });
+    this.todaySummaryEl = timerPanel.createDiv({ cls: "tomato-countdown-today" });
 
     const formPanel = container.createDiv({ cls: "tomato-countdown-panel tomato-countdown-form" });
     formPanel.createEl("label", { text: "Task name" });
@@ -566,15 +797,15 @@ class TomatoCountdownView extends ItemView {
 
     const actionPanel = container.createDiv({ cls: "tomato-countdown-actions" });
     this.startButtonEl = actionPanel.createEl("button", { text: "Start" });
-    this.pauseButtonEl = actionPanel.createEl("button", { text: "Stop" });
+    this.interruptButtonEl = actionPanel.createEl("button", { text: "Interrupt" });
     this.abandonButtonEl = actionPanel.createEl("button", { text: "Abandon" });
 
     this.startButtonEl.addEventListener("click", () => {
       void this.plugin.startTimer(this.taskInputEl.value);
     });
 
-    this.pauseButtonEl.addEventListener("click", () => {
-      void this.plugin.pauseTimer();
+    this.interruptButtonEl.addEventListener("click", () => {
+      void this.plugin.interruptTimer();
     });
 
     this.abandonButtonEl.addEventListener("click", () => {
@@ -582,7 +813,15 @@ class TomatoCountdownView extends ItemView {
     });
 
     const historyPanel = container.createDiv({ cls: "tomato-countdown-history" });
-    historyPanel.createDiv({ cls: "tomato-countdown-history-title", text: "Recent tasks" });
+    const historyHeader = historyPanel.createDiv({ cls: "tomato-countdown-history-header" });
+    historyHeader.createDiv({ cls: "tomato-countdown-history-title", text: "Recent tasks" });
+    this.statsButtonEl = historyHeader.createEl("button", {
+      text: "Statistics",
+      cls: "tomato-countdown-stats-button",
+    });
+    this.statsButtonEl.addEventListener("click", () => {
+      void this.plugin.showStatistics(new Date());
+    });
     this.historyListEl = historyPanel.createDiv({ cls: "tomato-countdown-history-list" });
 
     this.registerEvent(
@@ -592,6 +831,7 @@ class TomatoCountdownView extends ItemView {
     );
 
     this.render();
+    void this.plugin.refreshTodaySummary();
   }
 
   async onClose(): Promise<void> {
@@ -602,9 +842,11 @@ class TomatoCountdownView extends ItemView {
     const remainingMs = this.plugin.getRemainingMs();
     const status = this.plugin.getStatus();
     const taskName = this.plugin.getTaskName();
+    const interruptCount = this.plugin.getInterruptCount();
 
     this.timeEl.setText(formatClock(remainingMs));
-    this.statusEl.setText(getStatusText(status, taskName));
+    this.statusEl.setText(getStatusText(status, taskName, interruptCount));
+    this.renderTodaySummary();
 
     if (taskName && document.activeElement !== this.taskInputEl) {
       this.taskInputEl.value = taskName;
@@ -615,8 +857,25 @@ class TomatoCountdownView extends ItemView {
     this.taskInputEl.disabled = status !== "idle";
     this.startButtonEl.setText(status === "paused" ? "Resume" : "Start");
     this.startButtonEl.disabled = status === "running";
-    this.pauseButtonEl.disabled = status !== "running";
+    this.interruptButtonEl.disabled = status !== "running";
     this.abandonButtonEl.disabled = status === "idle";
+  }
+
+  private renderTodaySummary(): void {
+    const summary = this.plugin.todaySummary;
+    if (!summary || summary.date !== formatDateKey(new Date())) {
+      this.todaySummaryEl.setText("Today: —");
+      return;
+    }
+
+    if (summary.totalSessions === 0) {
+      this.todaySummaryEl.setText("Today: no tomatoes yet");
+      return;
+    }
+
+    this.todaySummaryEl.setText(
+      `Today: ${summary.totalSessions} 🍅 · ${summary.totalFocusMinutes}m · ${summary.goodCount}${GOOD_TOMATO} ${summary.badCount}${BAD_TOMATO} ${summary.rottenCount}${ROTTEN_TOMATO}`,
+    );
   }
 
   private renderHistory(): void {
@@ -744,7 +1003,7 @@ class TomatoCountdownSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Log file path")
-      .setDesc("Completed and abandoned countdowns are appended here.")
+      .setDesc("Completed, interrupted, and abandoned countdowns are appended here.")
       .addText((text) => {
         text
           .setPlaceholder(DEFAULT_SETTINGS.logFilePath)
@@ -781,8 +1040,99 @@ function formatTime(timestamp: number): string {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+function formatDateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 function getDateTitle(date: Date): string {
-  return `# ${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return `# ${formatDateKey(date)}`;
+}
+
+function qualityForInterrupts(count: number): TomatoQuality {
+  if (count >= 2) {
+    return ROTTEN_TOMATO;
+  }
+  if (count === 1) {
+    return BAD_TOMATO;
+  }
+  return GOOD_TOMATO;
+}
+
+function parseRecords(body: string, dateStr: string): SessionRecord[] {
+  const records: SessionRecord[] = [];
+  let heading = "";
+  let contentLines: string[] = [];
+
+  const flush = () => {
+    if (!heading) {
+      return;
+    }
+    const record = parseRecord(heading, contentLines, dateStr);
+    if (record) {
+      records.push(record);
+    }
+    heading = "";
+    contentLines = [];
+  };
+
+  for (const line of body.split("\n")) {
+    if (/^#### \[\d{2}:\d{2}-\d{2}:\d{2}\]/.test(line)) {
+      flush();
+      heading = line;
+      continue;
+    }
+
+    if (heading) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("- ")) {
+        contentLines.push(trimmed);
+      } else if (trimmed.length > 0) {
+        contentLines.push(trimmed);
+      }
+    }
+  }
+
+  flush();
+  return records;
+}
+
+function parseRecord(heading: string, contentLines: string[], dateStr: string): SessionRecord | null {
+  const match = heading.match(/^#### \[(\d{2}):(\d{2})-(\d{2}):(\d{2})\] (.+) \((\d+)m, (.)🍅, i(\d+)\)$/u);
+  if (!match) {
+    return null;
+  }
+
+  const startH = Number(match[1]);
+  const startM = Number(match[2]);
+  const endH = Number(match[3]);
+  const endM = Number(match[4]);
+  const taskName = match[5];
+  const durationMinutes = Number(match[6]);
+  const quality = match[7] as TomatoQuality;
+  const interrupts = Number(match[8]);
+
+  const dateParts = dateStr.split("-").map(Number);
+  if (dateParts.length !== 3 || dateParts.some((part) => Number.isNaN(part))) {
+    return null;
+  }
+
+  const [year, month, day] = dateParts;
+  const startTimestamp = new Date(year, month - 1, day, startH, startM).getTime();
+  const endTimestamp = new Date(year, month - 1, day, endH, endM).getTime();
+
+  const abandoned = contentLines.some((line) => line.replace(/^-\s*/, "").startsWith("abandoned:"));
+  const note = contentLines.join("\n");
+
+  return {
+    startTimestamp,
+    endTimestamp,
+    taskName,
+    durationMinutes,
+    quality,
+    interrupts,
+    abandoned,
+    note,
+  };
 }
 
 function getElectronNotification(): ElectronNotificationConstructor | null {
@@ -852,12 +1202,15 @@ function splitDateBlocks(content: string): { title: string; body: string; raw: s
   return blocks;
 }
 
-function getStatusText(status: TimerStatus, taskName: string): string {
+function getStatusText(status: TimerStatus, taskName: string, interruptCount: number): string {
   if (status === "running") {
     return taskName ? `Running: ${taskName}` : "Running";
   }
 
   if (status === "paused") {
+    if (interruptCount > 0) {
+      return taskName ? `Interrupted (${interruptCount}): ${taskName}` : `Interrupted (${interruptCount})`;
+    }
     return taskName ? `Stopped: ${taskName}` : "Stopped";
   }
 

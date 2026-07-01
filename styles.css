@@ -65,10 +65,33 @@
   gap: 8px;
 }
 
+.tomato-countdown-history-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.tomato-countdown-history-header .tomato-countdown-history-title {
+  flex: 1;
+}
+
+.tomato-countdown-stats-button {
+  flex: 0 0 auto;
+}
+
 .tomato-countdown-history-title {
   color: var(--text-muted);
   font-size: var(--font-ui-small);
   font-weight: 600;
+}
+
+.tomato-countdown-today {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin-top: 8px;
+  min-height: 18px;
+  text-align: center;
 }
 
 .tomato-countdown-history-list {
@@ -84,12 +107,75 @@
   white-space: nowrap;
 }
 
+.tomato-countdown-stats {
+  max-width: 520px;
+}
+
+.tomato-countdown-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 8px 0;
+}
+
+.tomato-countdown-stats-tasks {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tomato-countdown-stats-task {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+}
+
+.tomato-countdown-stats-task-name {
+  font-weight: 600;
+}
+
+.tomato-countdown-stats-task-meta {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.tomato-countdown-stats-records {
+  display: grid;
+  gap: 4px;
+}
+
+.tomato-countdown-stats-record {
+  border-left: 3px solid var(--tomato-accent);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  padding-left: 8px;
+  word-break: break-word;
+}
+
+.tomato-countdown-stats-record-heading {
+  color: var(--text-normal);
+  font-weight: 600;
+}
+
+.tomato-countdown-stats-record-note {
+  margin-top: 2px;
+  white-space: pre-wrap;
+}
+
+.tomato-countdown-interrupt-textarea {
+  min-height: 120px;
+  width: 100%;
+}
+
 @media (max-width: 420px) {
   .tomato-countdown-view {
     padding: 12px;
   }
 
   .tomato-countdown-actions {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
 }

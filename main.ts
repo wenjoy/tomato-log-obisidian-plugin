@@ -297,8 +297,6 @@ export default class TomatoCountdownPlugin extends Plugin {
     current.interrupts = [...(current.interrupts ?? []), { reason: trimmedReason, timestamp: Date.now() }];
     await this.saveSettings();
     this.emitTimerChange();
-    this.notifySystem("Tomato countdown interrupted", trimmedReason);
-    new Notice(`Interrupt logged: ${trimmedReason}`);
   }
 
   async abandonTimer(): Promise<void> {

@@ -12,6 +12,7 @@ import {
 } from "obsidian";
 
 const VIEW_TYPE_TOMATO_COUNTDOWN = "tomato-countdown-view";
+const VIEW_TYPE_TOMATO_STATISTICS = "tomato-statistics-view";
 const DEFAULT_DURATION_MINUTES = 25;
 const MAX_HISTORY_ITEMS = 20;
 const GOOD_TOMATO = "🙂";
@@ -20,6 +21,7 @@ const ROTTEN_TOMATO = "🤢";
 
 type TimerStatus = "idle" | "running" | "paused";
 type TomatoQuality = typeof GOOD_TOMATO | typeof BAD_TOMATO | typeof ROTTEN_TOMATO;
+type StatisticsRange = "day" | "week" | "month" | "task";
 
 interface Interrupt {
   reason: string;
@@ -40,6 +42,7 @@ interface TomatoCountdownSettings {
 
 interface ActiveSession {
   taskName: string;
+  taskCount: number;
   startTimestamp: number;
   durationMs: number;
   remainingMs: number;
@@ -66,6 +69,12 @@ interface TaskStatistics {
   interrupts: number;
 }
 
+interface TaskTableRow extends TaskStatistics {
+  goodCount: number;
+  badCount: number;
+  rottenCount: number;
+}
+
 interface DailyStatistics {
   date: string;
   records: SessionRecord[];
@@ -78,6 +87,29 @@ interface DailyStatistics {
   totalInterrupts: number;
   totalFocusMinutes: number;
   byTask: TaskStatistics[];
+}
+
+interface PeriodStatistics {
+  title: string;
+  sortKey: string;
+  records: SessionRecord[];
+  totalSessions: number;
+  completedCount: number;
+  abandonedCount: number;
+  goodCount: number;
+  badCount: number;
+  rottenCount: number;
+  totalInterrupts: number;
+  totalFocusMinutes: number;
+  byTask: TaskStatistics[];
+}
+
+interface StatisticsDataset {
+  overall: PeriodStatistics;
+  day: PeriodStatistics[];
+  week: PeriodStatistics[];
+  month: PeriodStatistics[];
+  task: PeriodStatistics[];
 }
 
 interface TodaySummary {
@@ -108,6 +140,7 @@ export default class TomatoCountdownPlugin extends Plugin {
     await this.loadSettings();
 
     this.registerView(VIEW_TYPE_TOMATO_COUNTDOWN, (leaf) => new TomatoCountdownView(leaf, this));
+    this.registerView(VIEW_TYPE_TOMATO_STATISTICS, (leaf) => new TomatoStatisticsView(leaf, this));
 
     this.addRibbonIcon("timer", "Tomato Countdown", () => {
       void this.activateView();
@@ -163,9 +196,9 @@ export default class TomatoCountdownPlugin extends Plugin {
 
     this.addCommand({
       id: "show-tomato-statistics",
-      name: "Show today's tomato statistics",
+      name: "Open tomato statistics",
       callback: () => {
-        void this.showStatistics(new Date());
+        void this.openStatisticsView();
       },
     });
 
@@ -177,6 +210,7 @@ export default class TomatoCountdownPlugin extends Plugin {
 
   onunload(): void {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_TOMATO_COUNTDOWN);
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_TOMATO_STATISTICS);
   }
 
   async loadSettings(): Promise<void> {
@@ -187,6 +221,10 @@ export default class TomatoCountdownPlugin extends Plugin {
       this.settings.activeSession.interrupts = Array.isArray(this.settings.activeSession.interrupts)
         ? this.settings.activeSession.interrupts
         : [];
+      this.settings.activeSession.taskName = normalizeTaskName(this.settings.activeSession.taskName);
+      this.settings.activeSession.taskCount =
+        Math.max(1, Number(this.settings.activeSession.taskCount)) ||
+        (await this.getCompletedTaskCount(this.settings.activeSession.taskName)) + 1;
     }
   }
 
@@ -246,7 +284,7 @@ export default class TomatoCountdownPlugin extends Plugin {
       return;
     }
 
-    const normalizedTaskName = (taskName ?? current?.taskName ?? "").trim();
+    const normalizedTaskName = normalizeTaskName(taskName ?? current?.taskName ?? "");
     if (!normalizedTaskName) {
       await this.promptAndStart();
       return;
@@ -258,9 +296,11 @@ export default class TomatoCountdownPlugin extends Plugin {
     }
 
     const durationMs = Math.max(1, this.settings.durationMinutes) * 60 * 1000;
+    const taskCount = (await this.getCompletedTaskCount(normalizedTaskName)) + 1;
 
     this.settings.activeSession = {
       taskName: normalizedTaskName,
+      taskCount,
       startTimestamp: Date.now(),
       durationMs,
       remainingMs: durationMs,
@@ -374,6 +414,10 @@ export default class TomatoCountdownPlugin extends Plugin {
     return this.settings.activeSession?.interrupts?.length ?? 0;
   }
 
+  getTaskCount(): number {
+    return this.settings.activeSession?.taskCount ?? 0;
+  }
+
   async showStatistics(date: Date): Promise<void> {
     const stats = await this.getDailyStatistics(date);
     if (stats.totalSessions === 0) {
@@ -384,10 +428,55 @@ export default class TomatoCountdownPlugin extends Plugin {
     new StatisticsModal(this.app, stats).open();
   }
 
+  async openStatisticsView(): Promise<void> {
+    const existingLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_TOMATO_STATISTICS)[0];
+
+    if (existingLeaf) {
+      this.app.workspace.revealLeaf(existingLeaf);
+      return;
+    }
+
+    const leaf = this.app.workspace.getLeaf(true);
+    await leaf.setViewState({
+      type: VIEW_TYPE_TOMATO_STATISTICS,
+      active: true,
+    });
+    this.app.workspace.revealLeaf(leaf);
+  }
+
+  async getStatisticsDataset(): Promise<StatisticsDataset | null> {
+    const logPath = this.settings.logFilePath.trim() || DEFAULT_SETTINGS.logFilePath;
+    const logFile = this.app.vault.getAbstractFileByPath(logPath);
+    if (!(logFile instanceof TFile)) {
+      new Notice(`Tomato log file not found: ${logPath}`);
+      return null;
+    }
+
+    let logContent = await this.app.vault.read(logFile);
+    const cleanedLogContent = removeObsoleteInlineStatistics(logContent);
+    if (cleanedLogContent !== logContent) {
+      await this.app.vault.modify(logFile, cleanedLogContent);
+      logContent = cleanedLogContent;
+    }
+
+    const recordsByDate = readAllRecordsByDate(logContent);
+    const records = Array.from(recordsByDate.values()).flat();
+    if (records.length === 0) {
+      new Notice(`No tomato records found in ${logPath}.`);
+      return null;
+    }
+
+    return buildStatisticsDataset(recordsByDate);
+  }
+
   async getDailyStatistics(date: Date): Promise<DailyStatistics> {
     const dateStr = formatDateKey(date);
     const records = await this.readRecordsForDate(dateStr);
 
+    return this.buildDailyStatistics(dateStr, records);
+  }
+
+  private buildDailyStatistics(dateStr: string, records: SessionRecord[]): DailyStatistics {
     const byTaskMap = new Map<string, TaskStatistics>();
     for (const record of records) {
       const taskStat = byTaskMap.get(record.taskName) ?? {
@@ -413,7 +502,15 @@ export default class TomatoCountdownPlugin extends Plugin {
       rottenCount: records.filter((record) => record.quality === ROTTEN_TOMATO).length,
       totalInterrupts: records.reduce((sum, record) => sum + record.interrupts, 0),
       totalFocusMinutes: records.reduce((sum, record) => sum + record.durationMinutes, 0),
-      byTask: Array.from(byTaskMap.values()).sort((a, b) => b.count - a.count),
+      byTask: Array.from(byTaskMap.values()).sort((a, b) => {
+        if (b.count !== a.count) {
+          return b.count - a.count;
+        }
+        if (b.interrupts !== a.interrupts) {
+          return b.interrupts - a.interrupts;
+        }
+        return a.taskName.localeCompare(b.taskName);
+      }),
     };
   }
 
@@ -457,7 +554,7 @@ export default class TomatoCountdownPlugin extends Plugin {
   }
 
   private async addTaskToHistory(taskName: string): Promise<void> {
-    const normalizedTaskName = taskName.trim();
+    const normalizedTaskName = normalizeTaskName(taskName);
     if (!normalizedTaskName) {
       return;
     }
@@ -476,8 +573,7 @@ export default class TomatoCountdownPlugin extends Plugin {
   ): Promise<void> {
     const focusedMs = Math.max(0, session.durationMs - session.remainingMs);
     const focusedMinutes = Math.max(1, Math.round(focusedMs / 60000));
-    const interruptCount = (session.interrupts ?? []).length;
-    const heading = `#### [${formatTime(session.startTimestamp)}-${formatTime(endTimestamp)}] ${session.taskName} (${focusedMinutes}m, ${quality}🍅, i${interruptCount})`;
+    const heading = `#### [${formatTime(session.startTimestamp)}-${formatTime(endTimestamp)}] (${quality}🍅, ${focusedMinutes}m)-${session.taskName}-${session.taskCount}`;
 
     const contentLines: string[] = [];
     for (const interrupt of session.interrupts ?? []) {
@@ -503,13 +599,25 @@ export default class TomatoCountdownPlugin extends Plugin {
     }
 
     const content = await this.app.vault.read(file);
-    const blocks = splitDateBlocks(content);
-    const block = blocks.find((item) => item.title === `# ${dateStr}`);
-    if (!block) {
-      return [];
+    return readRecordsForDateFromContent(content, dateStr);
+  }
+
+  private async getCompletedTaskCount(taskName: string): Promise<number> {
+    const normalizedTaskName = normalizeTaskName(taskName);
+    if (!normalizedTaskName) {
+      return 0;
     }
 
-    return parseRecords(block.body, dateStr);
+    const path = this.settings.logFilePath.trim() || DEFAULT_SETTINGS.logFilePath;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      return 0;
+    }
+
+    const content = await this.app.vault.read(file);
+    return Array.from(readAllRecordsByDate(content).values())
+      .flat()
+      .filter((record) => normalizeTaskName(record.taskName) === normalizedTaskName).length;
   }
 
   private async appendLogLine(line: string): Promise<void> {
@@ -701,7 +809,6 @@ class StatisticsModal extends Modal {
 
     const summary = contentEl.createDiv({ cls: "tomato-countdown-stats-row" });
     summary.createEl("span", { text: `${this.stats.totalSessions} 🍅` });
-    summary.createEl("span", { text: `${this.stats.totalFocusMinutes}m focused` });
     summary.createEl("span", { text: `${this.stats.totalInterrupts} interrupts` });
 
     const quality = contentEl.createDiv({ cls: "tomato-countdown-stats-row" });
@@ -720,7 +827,7 @@ class StatisticsModal extends Modal {
         const row = list.createDiv({ cls: "tomato-countdown-stats-task" });
         row.createEl("div", { text: task.taskName, cls: "tomato-countdown-stats-task-name" });
         row.createEl("div", {
-          text: `${task.count} 🍅 · ${task.focusMinutes}m · ${task.interrupts} interrupts`,
+          text: `${task.count} 🍅 · ${task.interrupts} interrupts`,
           cls: "tomato-countdown-stats-task-meta",
         });
       }
@@ -742,6 +849,320 @@ class StatisticsModal extends Modal {
 
   onClose(): void {
     this.contentEl.empty();
+  }
+}
+
+class TomatoStatisticsView extends ItemView {
+  private plugin: TomatoCountdownPlugin;
+  private activeRange: StatisticsRange = "day";
+  private dataset: StatisticsDataset | null = null;
+  private rootEl: HTMLElement;
+  private selectedPeriodKeys: Record<StatisticsRange, string | null> = {
+    day: null,
+    week: null,
+    month: null,
+    task: null,
+  };
+
+  constructor(leaf: WorkspaceLeaf, plugin: TomatoCountdownPlugin) {
+    super(leaf);
+    this.plugin = plugin;
+  }
+
+  getViewType(): string {
+    return VIEW_TYPE_TOMATO_STATISTICS;
+  }
+
+  getDisplayText(): string {
+    return "Tomato Statistics";
+  }
+
+  getIcon(): string {
+    return "bar-chart-3";
+  }
+
+  async onOpen(): Promise<void> {
+    const container = this.containerEl.children[1];
+    container.empty();
+    container.addClass("tomato-statistics-view");
+    this.rootEl = container.createDiv({ cls: "tomato-statistics-content" });
+    await this.refresh();
+  }
+
+  async onClose(): Promise<void> {
+    this.containerEl.children[1].empty();
+  }
+
+  private async refresh(): Promise<void> {
+    this.rootEl.empty();
+    this.rootEl.createDiv({ cls: "tomato-statistics-loading", text: "Loading statistics..." });
+    this.dataset = await this.plugin.getStatisticsDataset();
+    this.render();
+  }
+
+  private render(): void {
+    this.rootEl.empty();
+
+    const header = this.rootEl.createDiv({ cls: "tomato-statistics-header" });
+    header.createEl("h2", { text: "Tomato Statistics" });
+    header.createEl("button", { text: "Refresh" }).addEventListener("click", () => {
+      void this.refresh();
+    });
+
+    if (!this.dataset) {
+      this.rootEl.createDiv({ cls: "tomato-statistics-empty", text: "No tomato records found." });
+      return;
+    }
+
+    const periods = this.dataset[this.activeRange];
+    const selectedPeriod = this.getSelectedPeriod(periods);
+
+    this.renderTabs(this.rootEl);
+    if (this.activeRange === "task") {
+      this.renderOverview(this.rootEl, this.dataset.overall);
+      this.renderTaskStatisticsTable(this.rootEl, periods);
+      return;
+    }
+
+    if (this.activeRange === "day") {
+      this.renderContributionGraph(this.rootEl, periods, selectedPeriod);
+    } else {
+      this.renderPeriodChart(this.rootEl, periods, selectedPeriod);
+    }
+    this.renderOverview(this.rootEl, selectedPeriod);
+    this.renderQualityChart(this.rootEl, selectedPeriod);
+    this.renderTaskChart(this.rootEl, selectedPeriod);
+  }
+
+  private renderTabs(container: HTMLElement): void {
+    const tabs = container.createDiv({ cls: "tomato-statistics-tabs" });
+    const tabItems: { value: StatisticsRange; label: string }[] = [
+      { value: "day", label: "Day" },
+      { value: "week", label: "Week" },
+      { value: "month", label: "Month" },
+      { value: "task", label: "Task" },
+    ];
+
+    for (const tab of tabItems) {
+      const button = tabs.createEl("button", {
+        text: tab.label,
+        cls: this.activeRange === tab.value ? "is-active" : "",
+        attr: { type: "button" },
+      });
+      button.addEventListener("click", () => {
+        this.activeRange = tab.value;
+        this.render();
+      });
+    }
+  }
+
+  private renderOverview(container: HTMLElement, stats: PeriodStatistics): void {
+    const metrics = container.createDiv({ cls: "tomato-statistics-metrics" });
+    this.renderMetric(metrics, "Tomatoes", String(stats.totalSessions));
+    this.renderMetric(metrics, "Interrupts", String(stats.totalInterrupts));
+    this.renderMetric(metrics, "Completed", String(stats.completedCount));
+    this.renderMetric(metrics, "Abandoned", String(stats.abandonedCount));
+  }
+
+  private renderMetric(container: HTMLElement, label: string, value: string): void {
+    const metric = container.createDiv({ cls: "tomato-statistics-metric" });
+    metric.createDiv({ cls: "tomato-statistics-metric-value", text: value });
+    metric.createDiv({ cls: "tomato-statistics-metric-label", text: label });
+  }
+
+  private renderContributionGraph(container: HTMLElement, periods: PeriodStatistics[], selectedPeriod: PeriodStatistics): void {
+    const panel = container.createDiv({ cls: "tomato-statistics-panel" });
+    panel.createEl("h3", { text: "Tomato contribution" });
+    const graph = panel.createDiv({ cls: "tomato-statistics-contribution-graph" });
+    const months = buildContributionMonths(periods);
+
+    for (const month of months) {
+      const row = graph.createDiv({ cls: "tomato-statistics-contribution-month" });
+      row.createDiv({ cls: "tomato-statistics-contribution-month-label", text: month.label });
+      const cells = row.createDiv({ cls: "tomato-statistics-contribution-month-cells" });
+      for (const day of month.days) {
+        const button = cells.createEl("button", {
+          cls: `tomato-statistics-contribution-cell tomato-statistics-contribution-level-${getContributionLevel(day.totalSessions)}`,
+          attr: {
+            type: "button",
+            title: formatPeriodTooltip(day),
+          },
+        });
+        if (day.sortKey === selectedPeriod.sortKey) {
+          button.addClass("is-selected");
+        }
+        button.addEventListener("click", () => {
+          this.selectedPeriodKeys.day = day.sortKey;
+          this.render();
+        });
+      }
+    }
+
+    const footer = panel.createDiv({ cls: "tomato-statistics-contribution-footer" });
+    footer.createSpan({ text: "Less" });
+    const levelLabels = ["0", "1-3", "4-6", "7-9", "10+"];
+    for (let level = 0; level <= 4; level += 1) {
+      footer.createSpan({
+        cls: `tomato-statistics-contribution-swatch tomato-statistics-contribution-level-${level}`,
+        attr: { title: `${levelLabels[level]} tomatoes` },
+      });
+    }
+    footer.createSpan({ text: "More" });
+  }
+
+  private renderPeriodChart(container: HTMLElement, periods: PeriodStatistics[], selectedPeriod: PeriodStatistics): void {
+    const panel = container.createDiv({ cls: "tomato-statistics-panel" });
+    panel.createEl("h3", { text: `Tomatoes by ${this.activeRange}` });
+    const chart = panel.createDiv({ cls: "tomato-statistics-vertical-chart" });
+    const maxTomatoes = Math.max(1, ...periods.map((period) => period.totalSessions));
+
+    for (const period of periods) {
+      this.renderVerticalBar(chart, period, maxTomatoes, period.sortKey === selectedPeriod.sortKey);
+    }
+  }
+
+  private renderQualityChart(container: HTMLElement, stats: PeriodStatistics): void {
+    const panel = container.createDiv({ cls: "tomato-statistics-panel" });
+    panel.createEl("h3", { text: `Quality · ${stats.title}` });
+
+    const total = Math.max(1, stats.totalSessions);
+    const good = (stats.goodCount / total) * 100;
+    const bad = (stats.badCount / total) * 100;
+    const rotten = (stats.rottenCount / total) * 100;
+    const pieWrap = panel.createDiv({ cls: "tomato-statistics-pie-wrap" });
+    pieWrap
+      .createDiv({ cls: "tomato-statistics-pie" })
+      .setAttr(
+        "style",
+        `background: conic-gradient(var(--tomato-chart-good) 0 ${good}%, var(--tomato-chart-bad) ${good}% ${
+          good + bad
+        }%, var(--tomato-chart-rotten) ${good + bad}% ${good + bad + rotten}%);`,
+      );
+    const legend = pieWrap.createDiv({ cls: "tomato-statistics-pie-legend" });
+    this.renderPieLegendItem(legend, "good", `${GOOD_TOMATO} Good`, stats.goodCount, good);
+    this.renderPieLegendItem(legend, "bad", `${BAD_TOMATO} Bad`, stats.badCount, bad);
+    this.renderPieLegendItem(legend, "rotten", `${ROTTEN_TOMATO} Rotten`, stats.rottenCount, rotten);
+  }
+
+  private renderTaskChart(container: HTMLElement, stats: PeriodStatistics): void {
+    const panel = container.createDiv({ cls: "tomato-statistics-panel" });
+    panel.createEl("h3", { text: `Tasks · ${stats.title}` });
+    const table = panel.createEl("table", { cls: "tomato-statistics-task-table" });
+    const thead = table.createEl("thead");
+    const headerRow = thead.createEl("tr");
+    headerRow.createEl("th", { text: "Task" });
+    headerRow.createEl("th", { text: "Tomatoes" });
+    headerRow.createEl("th", { text: "Good" });
+    headerRow.createEl("th", { text: "Bad" });
+    headerRow.createEl("th", { text: "Rotten" });
+    headerRow.createEl("th", { text: "Interrupts" });
+
+    const tbody = table.createEl("tbody");
+    for (const task of buildTaskTableRows(stats.records)) {
+      const row = tbody.createEl("tr");
+      row.createEl("td", { text: task.taskName });
+      row.createEl("td", { text: String(task.count) });
+      row.createEl("td", { text: String(task.goodCount) });
+      row.createEl("td", { text: String(task.badCount) });
+      row.createEl("td", { text: String(task.rottenCount) });
+      row.createEl("td", { text: String(task.interrupts) });
+    }
+  }
+
+  private renderTaskStatisticsTable(container: HTMLElement, tasks: PeriodStatistics[]): void {
+    const panel = container.createDiv({ cls: "tomato-statistics-panel" });
+    panel.createEl("h3", { text: "Task statistics" });
+    const table = panel.createEl("table", { cls: "tomato-statistics-task-table" });
+    const thead = table.createEl("thead");
+    const headerRow = thead.createEl("tr");
+    headerRow.createEl("th", { text: "Task" });
+    headerRow.createEl("th", { text: "Tomatoes" });
+    headerRow.createEl("th", { text: "Good" });
+    headerRow.createEl("th", { text: "Bad" });
+    headerRow.createEl("th", { text: "Rotten" });
+    headerRow.createEl("th", { text: "Interrupts" });
+
+    const tbody = table.createEl("tbody");
+    for (const task of tasks) {
+      const row = tbody.createEl("tr");
+      row.createEl("td", { text: task.title });
+      row.createEl("td", { text: String(task.totalSessions) });
+      row.createEl("td", { text: String(task.goodCount) });
+      row.createEl("td", { text: String(task.badCount) });
+      row.createEl("td", { text: String(task.rottenCount) });
+      row.createEl("td", { text: String(task.totalInterrupts) });
+    }
+  }
+
+  private renderBar(
+    container: HTMLElement,
+    label: string,
+    value: number,
+    maxValue: number,
+    meta: string,
+    options?: { selected?: boolean; onClick?: () => void; valueText?: string },
+  ): void {
+    const row = options?.onClick
+      ? container.createEl("button", {
+          cls: options.selected ? "tomato-statistics-bar-row is-selectable is-selected" : "tomato-statistics-bar-row is-selectable",
+          attr: { type: "button" },
+        })
+      : container.createDiv({ cls: "tomato-statistics-bar-row" });
+    row.createDiv({ cls: "tomato-statistics-bar-label", text: label });
+    const track = row.createDiv({ cls: "tomato-statistics-bar-track" });
+    track
+      .createDiv({ cls: "tomato-statistics-bar-fill" })
+      .setAttr("style", `width: ${Math.max(4, (value / maxValue) * 100)}%`);
+    row.createDiv({ cls: "tomato-statistics-bar-value", text: `${options?.valueText ?? String(value)} 🍅 · ${meta}` });
+    if (options?.onClick) {
+      row.addEventListener("click", options.onClick);
+    }
+  }
+
+  private renderVerticalBar(
+    container: HTMLElement,
+    period: PeriodStatistics,
+    maxValue: number,
+    selected: boolean,
+  ): void {
+    const button = container.createEl("button", {
+      cls: selected ? "tomato-statistics-vertical-item is-selected" : "tomato-statistics-vertical-item",
+      attr: {
+        type: "button",
+        title: formatPeriodTooltip(period),
+      },
+    });
+    button.addEventListener("click", () => {
+      this.selectedPeriodKeys[this.activeRange] = period.sortKey;
+      this.render();
+    });
+
+    button.createDiv({ cls: "tomato-statistics-vertical-value", text: String(period.totalSessions) });
+    const track = button.createDiv({ cls: "tomato-statistics-vertical-track" });
+    track
+      .createDiv({ cls: "tomato-statistics-vertical-fill" })
+      .setAttr("style", `height: ${Math.max(4, (period.totalSessions / maxValue) * 100)}%`);
+    button.createDiv({ cls: "tomato-statistics-vertical-label", text: shortPeriodLabel(period.title, this.activeRange) });
+    button.createDiv({ cls: "tomato-statistics-vertical-meta", text: `${period.totalInterrupts}i` });
+  }
+
+  private renderPieLegendItem(
+    container: HTMLElement,
+    quality: string,
+    label: string,
+    count: number,
+    percent: number,
+  ): void {
+    const item = container.createDiv({ cls: "tomato-statistics-pie-legend-item" });
+    item.createSpan({ cls: `tomato-statistics-pie-dot tomato-statistics-pie-dot-${quality}` });
+    item.createSpan({ text: `${label}: ${count} (${Math.round(percent)}%)` });
+  }
+
+  private getSelectedPeriod(periods: PeriodStatistics[]): PeriodStatistics {
+    const selectedKey = this.selectedPeriodKeys[this.activeRange];
+    const selectedPeriod = periods.find((period) => period.sortKey === selectedKey) ?? periods[0];
+    this.selectedPeriodKeys[this.activeRange] = selectedPeriod.sortKey;
+    return selectedPeriod;
   }
 }
 
@@ -810,16 +1231,19 @@ class TomatoCountdownView extends ItemView {
       void this.plugin.abandonTimer();
     });
 
-    const historyPanel = container.createDiv({ cls: "tomato-countdown-history" });
-    const historyHeader = historyPanel.createDiv({ cls: "tomato-countdown-history-header" });
-    historyHeader.createDiv({ cls: "tomato-countdown-history-title", text: "Recent tasks" });
-    this.statsButtonEl = historyHeader.createEl("button", {
+    const statisticsPanel = container.createDiv({ cls: "tomato-countdown-panel tomato-countdown-statistics-panel" });
+    statisticsPanel.createDiv({ cls: "tomato-countdown-history-title", text: "Statistics" });
+    this.statsButtonEl = statisticsPanel.createEl("button", {
       text: "Statistics",
       cls: "tomato-countdown-stats-button",
     });
     this.statsButtonEl.addEventListener("click", () => {
-      void this.plugin.showStatistics(new Date());
+      void this.plugin.openStatisticsView();
     });
+
+    const historyPanel = container.createDiv({ cls: "tomato-countdown-history" });
+    const historyHeader = historyPanel.createDiv({ cls: "tomato-countdown-history-header" });
+    historyHeader.createDiv({ cls: "tomato-countdown-history-title", text: "Recent tasks" });
     this.historyListEl = historyPanel.createDiv({ cls: "tomato-countdown-history-list" });
 
     this.registerEvent(
@@ -841,9 +1265,10 @@ class TomatoCountdownView extends ItemView {
     const status = this.plugin.getStatus();
     const taskName = this.plugin.getTaskName();
     const interruptCount = this.plugin.getInterruptCount();
+    const taskCount = this.plugin.getTaskCount();
 
     this.timeEl.setText(formatClock(remainingMs));
-    this.statusEl.setText(getStatusText(status, taskName, interruptCount));
+    this.statusEl.setText(getStatusText(status, taskName, interruptCount, taskCount));
     this.renderTodaySummary();
 
     if (taskName && document.activeElement !== this.taskInputEl) {
@@ -872,7 +1297,7 @@ class TomatoCountdownView extends ItemView {
     }
 
     this.todaySummaryEl.setText(
-      `Today: ${summary.totalSessions} 🍅 · ${summary.totalFocusMinutes}m · ${summary.goodCount}${GOOD_TOMATO} ${summary.badCount}${BAD_TOMATO} ${summary.rottenCount}${ROTTEN_TOMATO}`,
+      `Today: ${summary.totalSessions} 🍅 · ${summary.goodCount}${GOOD_TOMATO} ${summary.badCount}${BAD_TOMATO} ${summary.rottenCount}${ROTTEN_TOMATO}`,
     );
   }
 
@@ -1056,6 +1481,21 @@ function qualityForInterrupts(count: number): TomatoQuality {
   return GOOD_TOMATO;
 }
 
+function normalizeTaskName(taskName: string): string {
+  return taskName.trim().replace(/\s+/g, " ");
+}
+
+function stripTaskCountSuffix(taskName: string): string {
+  return taskName.replace(/-\d+$/, "");
+}
+
+function countInterruptLines(contentLines: string[]): number {
+  return contentLines.filter((line) => {
+    const normalized = line.replace(/^-\s*/, "");
+    return normalized.length > 0 && !normalized.startsWith("abandoned:");
+  }).length;
+}
+
 function parseRecords(body: string, dateStr: string): SessionRecord[] {
   const records: SessionRecord[] = [];
   let heading = "";
@@ -1094,8 +1534,40 @@ function parseRecords(body: string, dateStr: string): SessionRecord[] {
   return records;
 }
 
+function readRecordsForDateFromContent(content: string, dateStr: string): SessionRecord[] {
+  const blocks = splitDateBlocks(content);
+  const block = blocks.find((item) => item.title === `# ${dateStr}`);
+  if (!block) {
+    return [];
+  }
+
+  return parseRecords(block.body, dateStr);
+}
+
+function readAllRecordsByDate(content: string): Map<string, SessionRecord[]> {
+  const recordsByDate = new Map<string, SessionRecord[]>();
+  for (const block of splitDateBlocks(content)) {
+    const dateMatch = block.title.match(/^# (\d{4}-\d{2}-\d{2})$/);
+    if (!dateMatch) {
+      continue;
+    }
+
+    const records = parseRecords(block.body, dateMatch[1]);
+    if (records.length > 0) {
+      recordsByDate.set(dateMatch[1], records);
+    }
+  }
+
+  return recordsByDate;
+}
+
 function parseRecord(heading: string, contentLines: string[], dateStr: string): SessionRecord | null {
-  const match = heading.match(/^#### \[(\d{2}):(\d{2})-(\d{2}):(\d{2})\] (.+) \((\d+)m, (.)🍅, i(\d+)\)$/u);
+  const newMatch = heading.match(/^#### \[(\d{2}):(\d{2})-(\d{2}):(\d{2})\] \((.)🍅, (\d+)m\)-(.+)$/u);
+  const newWithInterruptMatch = heading.match(
+    /^#### \[(\d{2}):(\d{2})-(\d{2}):(\d{2})\] \((.)🍅, (\d+)m, i(\d+)\)-(.+)$/u,
+  );
+  const oldMatch = heading.match(/^#### \[(\d{2}):(\d{2})-(\d{2}):(\d{2})\] (.+) \((\d+)m, (.)🍅, i(\d+)\)$/u);
+  const match = newMatch ?? newWithInterruptMatch ?? oldMatch;
   if (!match) {
     return null;
   }
@@ -1104,10 +1576,12 @@ function parseRecord(heading: string, contentLines: string[], dateStr: string): 
   const startM = Number(match[2]);
   const endH = Number(match[3]);
   const endM = Number(match[4]);
-  const taskName = match[5];
+  const isNewFormat = match === newMatch;
+  const isNewWithInterruptFormat = match === newWithInterruptMatch;
+  const taskName = normalizeTaskName(stripTaskCountSuffix(isNewFormat ? match[7] : isNewWithInterruptFormat ? match[8] : match[5]));
   const durationMinutes = Number(match[6]);
-  const quality = match[7] as TomatoQuality;
-  const interrupts = Number(match[8]);
+  const quality = (isNewFormat || isNewWithInterruptFormat ? match[5] : match[7]) as TomatoQuality;
+  const interrupts = isNewFormat ? countInterruptLines(contentLines) : Number(isNewWithInterruptFormat ? match[7] : match[8]);
 
   const dateParts = dateStr.split("-").map(Number);
   if (dateParts.length !== 3 || dateParts.some((part) => Number.isNaN(part))) {
@@ -1147,7 +1621,7 @@ function getElectronNotification(): ElectronNotificationConstructor | null {
 }
 
 function prependWithDateHeader(currentContent: string, dateTitle: string, line: string): string {
-  const trimmed = currentContent.trimEnd();
+  const trimmed = removeObsoleteInlineStatistics(currentContent).trimEnd();
 
   if (trimmed.length === 0) {
     return `${dateTitle}\n${line}\n`;
@@ -1164,6 +1638,235 @@ function prependWithDateHeader(currentContent: string, dateTitle: string, line: 
     .join("\n\n");
 
   return rest ? `${currentBlock}\n\n${rest}\n` : `${currentBlock}\n`;
+}
+
+function removeObsoleteInlineStatistics(content: string): string {
+  return content
+    .replace(/<!-- tomato-statistics:start -->[\s\S]*?<!-- tomato-statistics:end -->\n*/g, "")
+    .replace(/^\s*<button\b[^\n]*\bdata-tomato-statistics-date="[^"]+"[^\n]*>State<\/button>\s*\n?/gm, "");
+}
+
+function buildStatisticsDataset(recordsByDate: Map<string, SessionRecord[]>): StatisticsDataset {
+  const sortedDates = Array.from(recordsByDate.keys()).sort((a, b) => b.localeCompare(a));
+  const allRecords = sortedDates.flatMap((date) => recordsByDate.get(date) ?? []);
+
+  return {
+    overall: buildPeriodStatistics("All records", "all", allRecords),
+    day: sortedDates.map((date) => buildPeriodStatistics(date, date, recordsByDate.get(date) ?? [])),
+    week: buildGroupedPeriodStatistics(recordsByDate, getWeekKey, getWeekTitle),
+    month: buildGroupedPeriodStatistics(recordsByDate, getMonthKey, (key) => key),
+    task: buildTaskPeriodStatistics(allRecords),
+  };
+}
+
+function buildContributionMonths(periods: PeriodStatistics[]): { label: string; days: PeriodStatistics[] }[] {
+  if (periods.length === 0) {
+    return [];
+  }
+
+  const periodsByDate = new Map(periods.map((period) => [period.sortKey, period]));
+  const sortedKeys = periods.map((period) => period.sortKey).sort();
+  const latestDate = parseDateKey(sortedKeys[sortedKeys.length - 1]);
+  if (!latestDate) {
+    return [{ label: "", days: periods.slice().sort((a, b) => a.sortKey.localeCompare(b.sortKey)) }];
+  }
+
+  const year = latestDate.getFullYear();
+  const months: { label: string; days: PeriodStatistics[] }[] = [];
+  for (let month = 0; month < 12; month += 1) {
+    const days: PeriodStatistics[] = [];
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 0);
+    for (const date = new Date(start); date.getTime() <= end.getTime(); date.setDate(date.getDate() + 1)) {
+      const dateKey = formatDateKey(date);
+      days.push(periodsByDate.get(dateKey) ?? buildPeriodStatistics(dateKey, dateKey, []));
+    }
+    months.push({
+      label: start.toLocaleString(undefined, { month: "short" }),
+      days,
+    });
+  }
+
+  return months;
+}
+
+function getContributionLevel(count: number): number {
+  if (count <= 0) {
+    return 0;
+  }
+  if (count <= 3) {
+    return 1;
+  }
+  if (count <= 6) {
+    return 2;
+  }
+  if (count <= 9) {
+    return 3;
+  }
+  return 4;
+}
+
+function buildTaskPeriodStatistics(records: SessionRecord[]): PeriodStatistics[] {
+  const grouped = new Map<string, SessionRecord[]>();
+  for (const record of records) {
+    grouped.set(record.taskName, [...(grouped.get(record.taskName) ?? []), record]);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([taskName, taskRecords]) => buildPeriodStatistics(taskName, taskName, taskRecords))
+    .sort((a, b) => {
+      if (b.totalSessions !== a.totalSessions) {
+        return b.totalSessions - a.totalSessions;
+      }
+      return a.title.localeCompare(b.title);
+    });
+}
+
+function buildTaskTableRows(records: SessionRecord[]): TaskTableRow[] {
+  const taskMap = new Map<string, TaskTableRow>();
+  for (const record of records) {
+    const task = taskMap.get(record.taskName) ?? {
+      taskName: record.taskName,
+      count: 0,
+      focusMinutes: 0,
+      interrupts: 0,
+      goodCount: 0,
+      badCount: 0,
+      rottenCount: 0,
+    };
+    task.count += 1;
+    task.focusMinutes += record.durationMinutes;
+    task.interrupts += record.interrupts;
+    if (record.quality === GOOD_TOMATO) {
+      task.goodCount += 1;
+    } else if (record.quality === BAD_TOMATO) {
+      task.badCount += 1;
+    } else if (record.quality === ROTTEN_TOMATO) {
+      task.rottenCount += 1;
+    }
+    taskMap.set(record.taskName, task);
+  }
+
+  return sortTaskStatistics(Array.from(taskMap.values())) as TaskTableRow[];
+}
+
+function buildGroupedPeriodStatistics(
+  recordsByDate: Map<string, SessionRecord[]>,
+  getKey: (dateStr: string) => string,
+  getTitle: (key: string) => string,
+): PeriodStatistics[] {
+  const grouped = new Map<string, SessionRecord[]>();
+  for (const [dateStr, records] of recordsByDate) {
+    const key = getKey(dateStr);
+    grouped.set(key, [...(grouped.get(key) ?? []), ...records]);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([key, records]) => buildPeriodStatistics(getTitle(key), key, records))
+    .sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+}
+
+function buildPeriodStatistics(title: string, sortKey: string, records: SessionRecord[]): PeriodStatistics {
+  const byTaskMap = new Map<string, TaskStatistics>();
+  for (const record of records) {
+    const taskStat = byTaskMap.get(record.taskName) ?? {
+      taskName: record.taskName,
+      count: 0,
+      focusMinutes: 0,
+      interrupts: 0,
+    };
+    taskStat.count += 1;
+    taskStat.focusMinutes += record.durationMinutes;
+    taskStat.interrupts += record.interrupts;
+    byTaskMap.set(record.taskName, taskStat);
+  }
+
+  return {
+    title,
+    sortKey,
+    records,
+    totalSessions: records.length,
+    completedCount: records.filter((record) => !record.abandoned).length,
+    abandonedCount: records.filter((record) => record.abandoned).length,
+    goodCount: records.filter((record) => record.quality === GOOD_TOMATO).length,
+    badCount: records.filter((record) => record.quality === BAD_TOMATO).length,
+    rottenCount: records.filter((record) => record.quality === ROTTEN_TOMATO).length,
+    totalInterrupts: records.reduce((sum, record) => sum + record.interrupts, 0),
+    totalFocusMinutes: records.reduce((sum, record) => sum + record.durationMinutes, 0),
+    byTask: sortTaskStatistics(Array.from(byTaskMap.values())),
+  };
+}
+
+function sortTaskStatistics(tasks: TaskStatistics[]): TaskStatistics[] {
+  return tasks.sort((a, b) => {
+    if (b.count !== a.count) {
+      return b.count - a.count;
+    }
+    if (b.interrupts !== a.interrupts) {
+      return b.interrupts - a.interrupts;
+    }
+    return a.taskName.localeCompare(b.taskName);
+  });
+}
+
+function parseDateKey(dateStr: string): Date | null {
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function getMonthKey(dateStr: string): string {
+  return dateStr.slice(0, 7);
+}
+
+function getWeekKey(dateStr: string): string {
+  const date = parseDateKey(dateStr);
+  if (!date) {
+    return dateStr;
+  }
+
+  const day = date.getDay() || 7;
+  date.setDate(date.getDate() - day + 1);
+  return formatDateKey(date);
+}
+
+function getWeekTitle(weekStartKey: string): string {
+  const start = parseDateKey(weekStartKey);
+  if (!start) {
+    return weekStartKey;
+  }
+
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  return `${weekStartKey} to ${formatDateKey(end)}`;
+}
+
+function shortPeriodLabel(title: string, range: StatisticsRange): string {
+  if (range === "week") {
+    return title.replace(/\d{4}-/g, "");
+  }
+  if (range === "month") {
+    return title.slice(5);
+  }
+  return title;
+}
+
+function formatPeriodTooltip(period: PeriodStatistics): string {
+  return [
+    period.title,
+    `${period.totalSessions} tomatoes`,
+    `${period.totalInterrupts} interrupts`,
+    `${period.completedCount} completed`,
+    `${period.abandonedCount} abandoned`,
+    `${period.goodCount}${GOOD_TOMATO} ${period.badCount}${BAD_TOMATO} ${period.rottenCount}${ROTTEN_TOMATO}`,
+  ].join("\n");
+}
+
+function pluralize(noun: string, count: number): string {
+  return count === 1 ? noun : `${noun}s`;
 }
 
 function splitDateBlocks(content: string): { title: string; body: string; raw: string }[] {
@@ -1200,16 +1903,17 @@ function splitDateBlocks(content: string): { title: string; body: string; raw: s
   return blocks;
 }
 
-function getStatusText(status: TimerStatus, taskName: string, interruptCount: number): string {
+function getStatusText(status: TimerStatus, taskName: string, interruptCount: number, taskCount: number): string {
+  const taskText = taskName && taskCount > 0 ? `${taskName} - ${taskCount}` : taskName;
   if (status === "running") {
-    return taskName ? `Running: ${taskName}` : "Running";
+    return taskText ? `Running: ${taskText}` : "Running";
   }
 
   if (status === "paused") {
     if (interruptCount > 0) {
-      return taskName ? `Interrupted (${interruptCount}): ${taskName}` : `Interrupted (${interruptCount})`;
+      return taskText ? `Interrupted (${interruptCount}): ${taskText}` : `Interrupted (${interruptCount})`;
     }
-    return taskName ? `Stopped: ${taskName}` : "Stopped";
+    return taskText ? `Stopped: ${taskText}` : "Stopped";
   }
 
   return "Ready";

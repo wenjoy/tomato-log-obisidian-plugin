@@ -137,29 +137,29 @@ export default class TomatoCountdownPlugin extends Plugin {
     this.registerView(VIEW_TYPE_TOMATO_COUNTDOWN, (leaf) => new TomatoCountdownView(leaf, this));
     this.registerView(VIEW_TYPE_TOMATO_STATISTICS, (leaf) => new TomatoStatisticsView(leaf, this));
 
-    this.addRibbonIcon("timer", "Tomato Countdown", () => {
+    this.addRibbonIcon("timer", "Tomato countdown", () => {
       void this.activateView();
     });
 
     this.addCommand({
-      id: "open-tomato-countdown",
-      name: "Open tomato countdown",
+      id: "open",
+      name: "Open timer",
       callback: () => {
         void this.activateView();
       },
     });
 
     this.addCommand({
-      id: "start-tomato-countdown",
-      name: "Start tomato countdown",
+      id: "start",
+      name: "Start timer",
       callback: () => {
         void this.promptAndStart();
       },
     });
 
     this.addCommand({
-      id: "interrupt-tomato-countdown",
-      name: "Interrupt tomato countdown",
+      id: "interrupt",
+      name: "Interrupt timer",
       checkCallback: (checking) => {
         if (!this.settings.activeSession || this.settings.activeSession.status !== "running") {
           return false;
@@ -174,8 +174,8 @@ export default class TomatoCountdownPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "abandon-tomato-countdown",
-      name: "Abandon tomato countdown",
+      id: "abandon",
+      name: "Abandon timer",
       checkCallback: (checking) => {
         if (!this.settings.activeSession || this.settings.activeSession.status === "idle") {
           return false;
@@ -190,8 +190,8 @@ export default class TomatoCountdownPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "show-tomato-statistics",
-      name: "Open tomato statistics",
+      id: "open-statistics",
+      name: "Open statistics",
       callback: () => {
         void this.openStatisticsView();
       },
@@ -204,7 +204,8 @@ export default class TomatoCountdownPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const saved = (await this.loadData()) as Partial<TomatoCountdownSettings> | null;
+    this.settings = { ...DEFAULT_SETTINGS, ...saved };
     this.settings.durationMinutes = Math.max(1, Number(this.settings.durationMinutes) || DEFAULT_DURATION_MINUTES);
     this.settings.taskHistory = Array.isArray(this.settings.taskHistory) ? this.settings.taskHistory : [];
     if (this.settings.activeSession) {
@@ -226,13 +227,13 @@ export default class TomatoCountdownPlugin extends Plugin {
     const existingLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_TOMATO_COUNTDOWN)[0];
 
     if (existingLeaf) {
-      this.app.workspace.revealLeaf(existingLeaf);
+      await this.app.workspace.revealLeaf(existingLeaf);
       return;
     }
 
     const leaf = this.app.workspace.getRightLeaf(false);
     if (!leaf) {
-      new Notice("Unable to open Tomato Countdown.");
+      new Notice("Unable to open tomato countdown.");
       return;
     }
 
@@ -241,7 +242,7 @@ export default class TomatoCountdownPlugin extends Plugin {
       active: true,
     });
 
-    this.app.workspace.revealLeaf(leaf);
+    await this.app.workspace.revealLeaf(leaf);
   }
 
   async promptAndStart(): Promise<void> {
@@ -412,7 +413,7 @@ export default class TomatoCountdownPlugin extends Plugin {
     const existingLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_TOMATO_STATISTICS)[0];
 
     if (existingLeaf) {
-      this.app.workspace.revealLeaf(existingLeaf);
+      await this.app.workspace.revealLeaf(existingLeaf);
       return;
     }
 
@@ -421,7 +422,7 @@ export default class TomatoCountdownPlugin extends Plugin {
       type: VIEW_TYPE_TOMATO_STATISTICS,
       active: true,
     });
-    this.app.workspace.revealLeaf(leaf);
+    await this.app.workspace.revealLeaf(leaf);
   }
 
   async getStatisticsDataset(): Promise<StatisticsDataset | null> {
@@ -435,7 +436,10 @@ export default class TomatoCountdownPlugin extends Plugin {
     const logContent = await this.app.vault.process(logFile, (data) => removeObsoleteInlineStatistics(data));
 
     const recordsByDate = readAllRecordsByDate(logContent);
-    const records = Array.from(recordsByDate.values()).flat();
+    const records = Array.from(recordsByDate.values()).reduce<SessionRecord[]>(
+      (all, recordsForDate) => all.concat(recordsForDate),
+      [],
+    );
     if (records.length === 0) {
       new Notice(`No tomato records found in ${logPath}.`);
       return null;
@@ -590,9 +594,12 @@ export default class TomatoCountdownPlugin extends Plugin {
     }
 
     const content = await this.app.vault.read(file);
-    return Array.from(readAllRecordsByDate(content).values())
-      .flat()
-      .filter((record) => normalizeTaskName(record.taskName) === normalizedTaskName).length;
+    const taskRecords = Array.from(readAllRecordsByDate(content).values()).reduce<SessionRecord[]>(
+      (all, recordsForDate) => all.concat(recordsForDate),
+      [],
+    );
+
+    return taskRecords.filter((record) => normalizeTaskName(record.taskName) === normalizedTaskName).length;
   }
 
   private async appendLogLine(line: string): Promise<void> {
@@ -778,7 +785,7 @@ class TomatoStatisticsView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Tomato Statistics";
+    return "Tomato statistics";
   }
 
   getIcon(): string {
@@ -808,7 +815,7 @@ class TomatoStatisticsView extends ItemView {
     this.rootEl.empty();
 
     const header = this.rootEl.createDiv({ cls: "tomato-statistics-header" });
-    header.createEl("h2", { text: "Tomato Statistics" });
+    header.createEl("h2", { text: "Tomato statistics" });
     header.createEl("button", { text: "Refresh" }).addEventListener("click", () => {
       void this.refresh();
     });
@@ -1067,7 +1074,7 @@ class TomatoCountdownView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Tomato Countdown";
+    return "Tomato countdown";
   }
 
   getIcon(): string {
@@ -1234,7 +1241,9 @@ class TaskNameModal extends Modal {
     if (this.history.length > 0) {
       new Setting(contentEl).setName("History").addDropdown((dropdown) => {
         dropdown.addOption("", "Select a previous task");
-        this.history.forEach((taskName) => dropdown.addOption(taskName, taskName));
+        this.history.forEach((taskName) => {
+          dropdown.addOption(taskName, taskName);
+        });
         dropdown.onChange((value) => {
           this.taskInputEl.value = value;
           this.taskInputEl.focus();
@@ -1330,20 +1339,24 @@ class TomatoCountdownSettingTab extends PluginSettingTab {
   }
 }
 
+function pad2(value: number): string {
+  return value < 10 ? `0${value}` : String(value);
+}
+
 function formatClock(ms: number): string {
   const totalSeconds = Math.ceil(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return `${pad2(minutes)}:${pad2(seconds)}`;
 }
 
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
 function formatDateKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
 function getDateTitle(date: Date): string {
@@ -1487,7 +1500,7 @@ function parseRecord(heading: string, contentLines: string[], dateStr: string): 
 }
 
 function prependWithDateHeader(currentContent: string, dateTitle: string, line: string): string {
-  const trimmed = removeObsoleteInlineStatistics(currentContent).trimEnd();
+  const trimmed = removeObsoleteInlineStatistics(currentContent).replace(/\s+$/, "");
 
   if (trimmed.length === 0) {
     return `${dateTitle}\n${line}\n`;
@@ -1514,7 +1527,10 @@ function removeObsoleteInlineStatistics(content: string): string {
 
 function buildStatisticsDataset(recordsByDate: Map<string, SessionRecord[]>): StatisticsDataset {
   const sortedDates = Array.from(recordsByDate.keys()).sort((a, b) => b.localeCompare(a));
-  const allRecords = sortedDates.flatMap((date) => recordsByDate.get(date) ?? []);
+  const allRecords = sortedDates.reduce<SessionRecord[]>(
+    (all, date) => all.concat(recordsByDate.get(date) ?? []),
+    [],
+  );
 
   return {
     overall: buildPeriodStatistics("All records", "all", allRecords),

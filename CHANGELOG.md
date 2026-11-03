@@ -4,6 +4,25 @@ All notable changes to **Tomato Countdown** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-11-03
+
+Submission fix-up. No behavioural changes, but the plugin now declares the API floor it actually needs and passes the Obsidian plugin linter with no errors.
+
+### Changed
+
+- Command IDs no longer repeat the plugin ID, and command names no longer repeat the plugin name: `Open timer`, `Start timer`, `Interrupt timer`, `Abandon timer`, `Open statistics`.
+- Minimum Obsidian version raised to 1.7.2, matching the async `Workspace.revealLeaf()` API that the plugin awaits.
+- UI strings use sentence case consistently (ribbon tooltip, view titles, notices).
+- `esbuild.config.mjs` uses Node's `builtinModules` instead of the deprecated `builtin-modules` package.
+
+### Fixed
+
+- Loading settings now narrows `loadData()` instead of assigning an `any` value, and repeated record reads no longer rely on ES2019+ array and string methods that the configured TypeScript lib doesn't declare.
+
+### Added
+
+- `npm run lint` and an `eslint.config.mjs` wired to `eslint-plugin-obsidianmd`, so the plugin guidelines are checked locally and in review.
+
 ## [0.2.0] - 2026-11-03
 
 The statistics release. Tomato Countdown stops being just a timer and starts showing where your focus time actually goes.
@@ -69,4 +88,5 @@ The initial release.
 - Settings for countdown duration, log file path, and clearing task history.
 
 [0.2.0]: https://github.com/wenjoy/tomato-log-obisidian-plugin/compare/0.1.0...0.2.0
+[0.2.1]: https://github.com/wenjoy/tomato-log-obisidian-plugin/compare/0.2.0...0.2.1
 [0.1.0]: https://github.com/wenjoy/tomato-log-obisidian-plugin/releases/tag/0.1.0

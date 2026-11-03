@@ -34,7 +34,7 @@ Start a 25-minute tomato, get interrupted, log what pulled you away, and watch t
 
 ## Getting started
 
-1. Click the timer icon in the ribbon, or run **Tomato Countdown: Open tomato countdown** from the command palette. The panel opens in the right sidebar.
+1. Click the timer icon in the ribbon, or run **Tomato Countdown: Open timer** from the command palette. The panel opens in the right sidebar.
 2. Type a task name (for example `write release notes`) and press **Start**.
 3. If something interrupts you, press **Interrupt** and describe what happened. The countdown keeps running.
 4. Let the timer reach zero, or press **Abandon** to stop early and record why.
@@ -85,7 +85,7 @@ Because the log is plain text, you can edit, reorder, or delete entries; statist
 
 ## Statistics view
 
-Open it with the **Statistics** button in the timer panel or **Tomato Countdown: Open tomato statistics**. The view reads the log file and supports four tabs:
+Open it with the **Statistics** button in the timer panel or **Tomato Countdown: Open statistics**. The view reads the log file and supports four tabs:
 
 | Tab | What you see |
 | --- | --- |
@@ -108,11 +108,11 @@ Metrics shown for the selected period: tomatoes, interruptions, completed, and a
 
 | Command | ID | Notes |
 | --- | --- | --- |
-| Open tomato countdown | `open-tomato-countdown` | Opens or reveals the timer panel. |
-| Start tomato countdown | `start-tomato-countdown` | Opens the task dialog, then starts and reveals the panel. |
-| Interrupt tomato countdown | `interrupt-tomato-countdown` | Only available while a countdown is running. |
-| Abandon tomato countdown | `abandon-tomato-countdown` | Only available while a countdown is running or paused. |
-| Open tomato statistics | `show-tomato-statistics` | Opens or reveals the statistics view. |
+| Open timer | `open` | Opens or reveals the timer panel. |
+| Start timer | `start` | Opens the task dialog, then starts and reveals the panel. |
+| Interrupt timer | `interrupt` | Only available while a countdown is running. |
+| Abandon timer | `abandon` | Only available while a countdown is running or paused. |
+| Open statistics | `open-statistics` | Opens or reveals the statistics view. |
 
 ## Notifications
 
@@ -132,6 +132,7 @@ System notifications are best-effort: they work in the desktop app, while some m
 npm install       # install dependencies
 npm run dev       # watch mode: rebuilds main.js on change
 npm run build     # type-check, then produce a minified production bundle
+npm run lint      # lint against the Obsidian plugin guidelines
 ```
 
 Source layout:
@@ -150,7 +151,7 @@ Releases are automated: pushing a tag that matches the `version` in `manifest.js
 
 ## Compatibility
 
-Requires Obsidian **1.5.0** or newer.
+Requires Obsidian **1.7.2** or newer.
 
 ## Release notes
 

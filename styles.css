@@ -116,64 +116,6 @@
   white-space: nowrap;
 }
 
-.tomato-countdown-stats {
-  max-width: 520px;
-}
-
-.tomato-countdown-stats-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin: 8px 0;
-}
-
-.tomato-countdown-stats-tasks {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.tomato-countdown-stats-task {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-}
-
-.tomato-countdown-stats-task-name {
-  font-weight: 600;
-}
-
-.tomato-countdown-stats-task-meta {
-  color: var(--text-muted);
-  font-size: var(--font-ui-small);
-}
-
-.tomato-countdown-stats-records {
-  display: grid;
-  gap: 4px;
-}
-
-.tomato-countdown-stats-record {
-  border-left: 3px solid var(--tomato-accent);
-  color: var(--text-muted);
-  font-size: var(--font-ui-small);
-  padding-left: 8px;
-  word-break: break-word;
-}
-
-.tomato-countdown-stats-record-heading {
-  color: var(--text-normal);
-  font-weight: 600;
-}
-
-.tomato-countdown-stats-record-note {
-  margin-top: 2px;
-  white-space: pre-wrap;
-}
-
 .tomato-countdown-interrupt-textarea {
   min-height: 120px;
   width: 100%;
@@ -261,11 +203,6 @@
   margin: 0 0 12px;
 }
 
-.tomato-statistics-chart {
-  display: grid;
-  gap: 10px;
-}
-
 .tomato-statistics-contribution-graph {
   display: grid;
   gap: 6px;
@@ -314,13 +251,8 @@
   outline: 1px solid var(--interactive-accent);
 }
 
-.tomato-statistics-contribution-cell.is-placeholder {
-  cursor: default;
-  opacity: 0;
-}
-
 .tomato-statistics-contribution-level-0 {
-  background-color: #ffffff !important;
+  background-color: transparent !important;
   border-color: var(--background-modifier-border);
 }
 
@@ -431,19 +363,6 @@
   margin-top: 2px;
 }
 
-.tomato-statistics-bar-row {
-  align-items: center;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(90px, 170px) minmax(90px, 1fr) minmax(88px, auto);
-  padding: 2px;
-  text-align: left;
-  width: 100%;
-}
-
 .tomato-statistics-task-table {
   border-collapse: collapse;
   font-size: var(--font-ui-small);
@@ -473,71 +392,6 @@
 .tomato-statistics-task-table th:nth-child(5),
 .tomato-statistics-task-table th:nth-child(6) {
   text-align: right;
-}
-
-.tomato-statistics-bar-row.is-selectable {
-  cursor: pointer;
-}
-
-.tomato-statistics-bar-row.is-selectable:hover {
-  background: var(--background-modifier-hover);
-}
-
-.tomato-statistics-bar-row.is-selected {
-  background: var(--background-modifier-hover);
-  border-color: var(--interactive-accent);
-}
-
-.tomato-statistics-bar-label,
-.tomato-statistics-bar-value {
-  color: var(--text-muted);
-  font-size: var(--font-ui-small);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tomato-statistics-bar-track {
-  background: var(--background-modifier-border);
-  border-radius: 4px;
-  height: 18px;
-  overflow: hidden;
-}
-
-.tomato-statistics-bar-fill {
-  background: var(--tomato-chart-focus);
-  height: 100%;
-}
-
-.tomato-statistics-stack {
-  border-radius: 4px;
-  display: flex;
-  min-height: 30px;
-  overflow: hidden;
-}
-
-.tomato-statistics-stack-segment {
-  align-items: center;
-  color: white;
-  display: flex;
-  font-size: var(--font-ui-small);
-  justify-content: center;
-  min-width: 0;
-  overflow: hidden;
-  padding: 0 6px;
-  white-space: nowrap;
-}
-
-.tomato-statistics-stack-good {
-  background: var(--tomato-chart-good);
-}
-
-.tomato-statistics-stack-bad {
-  background: var(--tomato-chart-bad);
-}
-
-.tomato-statistics-stack-rotten {
-  background: var(--tomato-chart-rotten);
 }
 
 .tomato-statistics-pie-wrap {
@@ -606,10 +460,6 @@
 
   .tomato-statistics-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .tomato-statistics-bar-row {
-    grid-template-columns: 1fr;
   }
 
   .tomato-statistics-pie-wrap {

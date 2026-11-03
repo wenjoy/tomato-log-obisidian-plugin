@@ -15,7 +15,7 @@ Start a 25-minute tomato, get interrupted, log what pulled you away, and watch t
 - **Statistics view** — Day / Week / Month / Task tabs with a year contribution grid, bar charts, a quality breakdown, and per-task tables.
 - **Survives restarts** — an active session is persisted and keeps counting from real timestamps, not tick counts.
 - **System notifications** — desktop notifications when a tomato finishes or is abandoned.
-- **Works on desktop and mobile** (`isDesktopOnly: false`).
+- **Works on desktop and mobile** — no Node.js or Electron APIs, so the same build is installable everywhere (`isDesktopOnly: false`).
 
 ## Installation
 
@@ -116,9 +116,9 @@ Metrics shown for the selected period: tomatoes, interruptions, completed, and a
 
 ## Notifications
 
-Completion and abandonment trigger a system notification (Electron notification on desktop, falling back to the Web Notifications API). Completed tomatoes also show a 10-second in-app notice. Logging an interruption does not notify, since the timer keeps running.
+Completion and abandonment trigger a system notification through the Web Notifications API, once Obsidian has been granted permission. Completed tomatoes also show a 10-second in-app notice. Logging an interruption does not notify, since the timer keeps running.
 
-On mobile, notification delivery depends on the platform's support for the Web Notifications API; the in-app notice always works.
+System notifications are best-effort: they work in the desktop app, while some mobile builds don't expose the Notification API at all. The in-app notice always works, and the plugin never uses Node.js or Electron APIs, so it installs and runs on mobile.
 
 ## Data and privacy
 
@@ -145,6 +145,8 @@ Source layout:
 | `versions.json` | Version → minimum Obsidian version map. |
 
 To test locally, copy `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/plugins/tomato-countdown/` and reload the plugin.
+
+Releases are automated: pushing a tag that matches the `version` in `manifest.json` runs `.github/workflows/release.yml`, builds the plugin, and attaches `main.js`, `manifest.json`, and `styles.css` to a GitHub release.
 
 ## Compatibility
 

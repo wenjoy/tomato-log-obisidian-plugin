@@ -1,7 +1,7 @@
 {
   "name": "obsidian-tomato-countdown",
   "version": "0.2.0",
-  "description": "A 25 minute tomato countdown timer for Obsidian.",
+  "description": "A 25-minute tomato countdown timer for Obsidian.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
@@ -12,8 +12,15 @@
     "pomodoro",
     "tomato timer"
   ],
-  "author": "",
+  "author": "wenjoy",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wenjoy/tomato-log-obisidian-plugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wenjoy/tomato-log-obisidian-plugin/issues"
+  },
   "dependencies": {
     "tslib": "^2.6.2"
   },

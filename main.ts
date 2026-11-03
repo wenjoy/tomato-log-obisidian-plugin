@@ -28,11 +28,6 @@ interface Interrupt {
   timestamp: number;
 }
 
-interface ElectronNotificationConstructor {
-  isSupported(): boolean;
-  new(options: { title: string; body?: string }): { show(): void };
-}
-
 interface TomatoCountdownSettings {
   durationMinutes: number;
   logFilePath: string;
@@ -206,11 +201,6 @@ export default class TomatoCountdownPlugin extends Plugin {
     this.registerInterval(window.setInterval(() => this.handleTick(), 1000));
     this.handleTick();
     void this.refreshTodaySummary();
-  }
-
-  onunload(): void {
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE_TOMATO_COUNTDOWN);
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE_TOMATO_STATISTICS);
   }
 
   async loadSettings(): Promise<void> {
@@ -418,16 +408,6 @@ export default class TomatoCountdownPlugin extends Plugin {
     return this.settings.activeSession?.taskCount ?? 0;
   }
 
-  async showStatistics(date: Date): Promise<void> {
-    const stats = await this.getDailyStatistics(date);
-    if (stats.totalSessions === 0) {
-      new Notice(`No tomato records for ${stats.date}.`);
-      return;
-    }
-
-    new StatisticsModal(this.app, stats).open();
-  }
-
   async openStatisticsView(): Promise<void> {
     const existingLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_TOMATO_STATISTICS)[0];
 
@@ -452,12 +432,7 @@ export default class TomatoCountdownPlugin extends Plugin {
       return null;
     }
 
-    let logContent = await this.app.vault.read(logFile);
-    const cleanedLogContent = removeObsoleteInlineStatistics(logContent);
-    if (cleanedLogContent !== logContent) {
-      await this.app.vault.modify(logFile, cleanedLogContent);
-      logContent = cleanedLogContent;
-    }
+    const logContent = await this.app.vault.process(logFile, (data) => removeObsoleteInlineStatistics(data));
 
     const recordsByDate = readAllRecordsByDate(logContent);
     const records = Array.from(recordsByDate.values()).flat();
@@ -626,9 +601,7 @@ export default class TomatoCountdownPlugin extends Plugin {
     const dateTitle = getDateTitle(new Date());
 
     if (existingFile instanceof TFile) {
-      const currentContent = await this.app.vault.read(existingFile);
-      const nextContent = prependWithDateHeader(currentContent, dateTitle, line);
-      await this.app.vault.modify(existingFile, nextContent);
+      await this.app.vault.process(existingFile, (data) => prependWithDateHeader(data, dateTitle, line));
       return;
     }
 
@@ -640,15 +613,6 @@ export default class TomatoCountdownPlugin extends Plugin {
   }
 
   private notifySystem(title: string, body: string): void {
-    const electronNotification = getElectronNotification();
-    if (electronNotification?.isSupported()) {
-      new electronNotification({
-        title,
-        body,
-      }).show();
-      return;
-    }
-
     const notificationApi = window.Notification;
     if (!notificationApi) {
       return;
@@ -789,66 +753,6 @@ class ReasonModal extends Modal {
 
     this.value = reason;
     this.close();
-  }
-}
-
-class StatisticsModal extends Modal {
-  private stats: DailyStatistics;
-
-  constructor(app: App, stats: DailyStatistics) {
-    super(app);
-    this.stats = stats;
-  }
-
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.addClass("tomato-countdown-stats");
-
-    contentEl.createEl("h2", { text: `Tomato statistics — ${this.stats.date}` });
-
-    const summary = contentEl.createDiv({ cls: "tomato-countdown-stats-row" });
-    summary.createEl("span", { text: `${this.stats.totalSessions} 🍅` });
-    summary.createEl("span", { text: `${this.stats.totalInterrupts} interrupts` });
-
-    const quality = contentEl.createDiv({ cls: "tomato-countdown-stats-row" });
-    quality.createEl("span", { text: `${GOOD_TOMATO} ${this.stats.goodCount}` });
-    quality.createEl("span", { text: `${BAD_TOMATO} ${this.stats.badCount}` });
-    quality.createEl("span", { text: `${ROTTEN_TOMATO} ${this.stats.rottenCount}` });
-
-    const completion = contentEl.createDiv({ cls: "tomato-countdown-stats-row" });
-    completion.createEl("span", { text: `${this.stats.completedCount} completed` });
-    completion.createEl("span", { text: `${this.stats.abandonedCount} abandoned` });
-
-    if (this.stats.byTask.length > 0) {
-      contentEl.createEl("h3", { text: "By task" });
-      const list = contentEl.createDiv({ cls: "tomato-countdown-stats-tasks" });
-      for (const task of this.stats.byTask) {
-        const row = list.createDiv({ cls: "tomato-countdown-stats-task" });
-        row.createEl("div", { text: task.taskName, cls: "tomato-countdown-stats-task-name" });
-        row.createEl("div", {
-          text: `${task.count} 🍅 · ${task.interrupts} interrupts`,
-          cls: "tomato-countdown-stats-task-meta",
-        });
-      }
-    }
-
-    if (this.stats.records.length > 0) {
-      contentEl.createEl("h3", { text: "Records" });
-      const records = contentEl.createDiv({ cls: "tomato-countdown-stats-records" });
-      for (const record of this.stats.records) {
-        const heading = `${formatTime(record.startTimestamp)}-${formatTime(record.endTimestamp)} ${record.taskName} (${record.durationMinutes}m, ${record.quality}🍅, i${record.interrupts})`;
-        const recordEl = records.createDiv({ cls: "tomato-countdown-stats-record" });
-        recordEl.createEl("div", { text: heading, cls: "tomato-countdown-stats-record-heading" });
-        if (record.note) {
-          recordEl.createEl("div", { text: record.note, cls: "tomato-countdown-stats-record-note" });
-        }
-      }
-    }
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
   }
 }
 
@@ -1091,31 +995,6 @@ class TomatoStatisticsView extends ItemView {
       row.createEl("td", { text: String(task.badCount) });
       row.createEl("td", { text: String(task.rottenCount) });
       row.createEl("td", { text: String(task.totalInterrupts) });
-    }
-  }
-
-  private renderBar(
-    container: HTMLElement,
-    label: string,
-    value: number,
-    maxValue: number,
-    meta: string,
-    options?: { selected?: boolean; onClick?: () => void; valueText?: string },
-  ): void {
-    const row = options?.onClick
-      ? container.createEl("button", {
-          cls: options.selected ? "tomato-statistics-bar-row is-selectable is-selected" : "tomato-statistics-bar-row is-selectable",
-          attr: { type: "button" },
-        })
-      : container.createDiv({ cls: "tomato-statistics-bar-row" });
-    row.createDiv({ cls: "tomato-statistics-bar-label", text: label });
-    const track = row.createDiv({ cls: "tomato-statistics-bar-track" });
-    track
-      .createDiv({ cls: "tomato-statistics-bar-fill" })
-      .setAttr("style", `width: ${Math.max(4, (value / maxValue) * 100)}%`);
-    row.createDiv({ cls: "tomato-statistics-bar-value", text: `${options?.valueText ?? String(value)} 🍅 · ${meta}` });
-    if (options?.onClick) {
-      row.addEventListener("click", options.onClick);
     }
   }
 
@@ -1607,19 +1486,6 @@ function parseRecord(heading: string, contentLines: string[], dateStr: string): 
   };
 }
 
-function getElectronNotification(): ElectronNotificationConstructor | null {
-  try {
-    if (typeof require !== "function") {
-      return null;
-    }
-
-    const electron = require("electron") as { Notification?: ElectronNotificationConstructor };
-    return electron.Notification ?? null;
-  } catch {
-    return null;
-  }
-}
-
 function prependWithDateHeader(currentContent: string, dateTitle: string, line: string): string {
   const trimmed = removeObsoleteInlineStatistics(currentContent).trimEnd();
 
@@ -1863,10 +1729,6 @@ function formatPeriodTooltip(period: PeriodStatistics): string {
     `${period.abandonedCount} abandoned`,
     `${period.goodCount}${GOOD_TOMATO} ${period.badCount}${BAD_TOMATO} ${period.rottenCount}${ROTTEN_TOMATO}`,
   ].join("\n");
-}
-
-function pluralize(noun: string, count: number): string {
-  return count === 1 ? noun : `${noun}s`;
 }
 
 function splitDateBlocks(content: string): { title: string; body: string; raw: string }[] {

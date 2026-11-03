@@ -3,8 +3,8 @@
   "name": "Tomato Countdown",
   "version": "0.2.0",
   "minAppVersion": "1.5.0",
-  "description": "A 25 minute tomato timer with task history, notifications, and session logging.",
-  "author": "",
-  "authorUrl": "",
+  "description": "Run 25-minute tomato timers and log tasks, interruptions, and statistics to Markdown.",
+  "author": "wenjoy",
+  "authorUrl": "https://github.com/wenjoy",
   "isDesktopOnly": false
 }

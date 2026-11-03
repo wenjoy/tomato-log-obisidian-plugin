@@ -13,7 +13,7 @@ The statistics release. Tomato Countdown stops being just a timer and starts sho
 - **A statistics view** with Day, Week, Month, and Task tabs — a year contribution grid, bar charts, a quality breakdown, and per-task tables.
 - **A today summary** in the timer panel, so the current day's tomato count and quality are visible without opening anything.
 - **A calmer interruption flow** — logging a distraction no longer cuts the session short, and tomato quality is now derived from how often you got interrupted.
-- **System notifications that actually fire** — Electron first, Web Notifications as a fallback.
+- **System notifications** — the OS tells you when a tomato ends, so you can focus in another app.
 
 ### Added
 
@@ -27,7 +27,7 @@ The statistics release. Tomato Countdown stops being just a timer and starts sho
 - Clickable heatmap cells and bars for switching the selected period, plus a **Refresh** button that re-reads the log.
 - Today summary line in the timer panel (`Today: n 🍅 · good/bad/rotten`).
 - Running tomato counter per task, appended to each log heading.
-- System notifications for finished and abandoned tomatoes, via Electron on desktop and the Web Notifications API elsewhere.
+- System notifications for finished and abandoned tomatoes through the Web Notifications API.
 - A 10-second in-app notice when a tomato completes.
 
 ### Changed
@@ -40,17 +40,19 @@ The statistics release. Tomato Countdown stops being just a timer and starts sho
 - Log entries are written newest-first under a per-date heading, with date sections ordered newest-first.
 - Recent tasks are one-click buttons in the timer panel instead of a dropdown, and are disabled while a session is active.
 - The standalone Pause action is gone; the timer only stops when an abandon prompt is cancelled, and **Start** then resumes it.
+- Notifications now go through the Web Notifications API only, so the plugin uses no Node.js or Electron APIs and stays installable on mobile.
 
 ### Fixed
 
 - Interruption records no longer trigger a system notification.
-- Notification delivery on desktop now prefers Electron and falls back cleanly.
+- Notification permission is requested the first time a notification is sent, instead of failing silently.
 - Assorted issues in the interruption and abandon flows, plus formatting cleanups.
 
 ### Removed
 
 - Inline statistics blocks and `State` buttons previously written into the log file. Statistics now live in a dedicated view, and the leftovers are stripped from the log the next time statistics are refreshed.
 - The per-session "feeling" prompt, replaced by tomato quality derived from interruptions.
+- Direct Electron usage and the now-unused inline statistics modal.
 
 ## [0.1.0] - 2026-06-16
 

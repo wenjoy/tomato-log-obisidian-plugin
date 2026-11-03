@@ -156,4 +156,4 @@ Version history and notable changes live in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-MIT
+Released under the [MIT License](LICENSE). © 2026 wenjoy

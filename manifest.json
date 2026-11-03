@@ -1,7 +1,7 @@
 {
   "id": "tomato-countdown",
   "name": "Tomato Countdown",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.5.0",
   "description": "A 25 minute tomato timer with task history, notifications, and session logging.",
   "author": "",

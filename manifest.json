@@ -1,7 +1,7 @@
 {
   "id": "tomato-countdown",
   "name": "Tomato Countdown",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "minAppVersion": "1.7.2",
   "description": "Run 25-minute tomato timers and log tasks, interruptions, and statistics to Markdown.",
   "author": "wenjoy",
